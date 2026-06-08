@@ -11,8 +11,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .tracing import current_trace_id
-
 log = logging.getLogger("mmsg.bus")
 
 Handler = Callable[["Event"], Awaitable[None]]
@@ -20,7 +18,6 @@ Handler = Callable[["Event"], Awaitable[None]]
 
 class Event(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
-    trace_id: str | None = None
     ts: float = Field(default_factory=time.time)
     type: str
     source: str
@@ -54,7 +51,6 @@ class EventBus:
             type=type,
             source=source,
             payload=payload or {},
-            trace_id=current_trace_id(),
         )
         # snapshot to allow handlers to (un)subscribe during dispatch
         targets = [h for pat, h in self._subs if fnmatch.fnmatchcase(type, pat)]

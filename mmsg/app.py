@@ -28,7 +28,7 @@ async def main(user_input: str) -> None:
     bus = EventBus()
     attach_console_sink(bus, verbose=False)
 
-    llm = llm_registry.create("openai")
+    llm = llm_registry.create("openai", model="deepseek-v4-pro")
     mem = LayeredMemory([memory_registry.create("working", capacity=64)])
     tools = {name: tool_registry.create(name) for name in tool_registry.names()}
 

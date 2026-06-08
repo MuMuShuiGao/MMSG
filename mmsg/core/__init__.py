@@ -1,6 +1,16 @@
 from .bus import Event, EventBus
 from .plugin import llm_registry, memory_registry, tool_registry
-from .tracing import current_trace_id, new_trace_id, setup_logging, trace_scope
+
+import logging
+
+
+def setup_logging(level: int = logging.INFO) -> None:
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
 
 __all__ = [
     "Event",
@@ -8,8 +18,5 @@ __all__ = [
     "llm_registry",
     "memory_registry",
     "tool_registry",
-    "current_trace_id",
-    "new_trace_id",
     "setup_logging",
-    "trace_scope",
 ]

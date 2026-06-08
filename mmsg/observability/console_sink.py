@@ -28,7 +28,7 @@ def attach_console_sink(bus: EventBus, *, verbose: bool = False) -> None:
     async def _print(evt: Event) -> None:
         color = _COLORS.get(evt.type, "")
         ts = datetime.fromtimestamp(evt.ts).strftime("%H:%M:%S.%f")[:-3]
-        head = f"{color}[{ts} {evt.trace_id or '-'} {evt.type:<14}]{_RESET} src={evt.source}"
+        head = f"{color}[{ts} {evt.type:<14}]{_RESET} src={evt.source}"
         body = _summary(evt) if not verbose else json.dumps(evt.payload, ensure_ascii=False)
         print(f"{head} {body}")
     bus.subscribe("*", _print)
