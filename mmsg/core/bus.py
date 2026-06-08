@@ -1,8 +1,9 @@
-"""In-process async event bus. Topic = event.type. Subscribers match by exact name or prefix wildcard 'foo.*' or '*'."""
+"""进程内异步事件总线。主题 = event.type，订阅者按精确名称、前缀通配符 'foo.*' 或 '*' 匹配。"""
 from __future__ import annotations
 
 import asyncio
 import fnmatch
+import json
 import logging
 import time
 import uuid
@@ -22,6 +23,12 @@ class Event(BaseModel):
     type: str
     source: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    @staticmethod
+    def from_json(data: str) -> "Event":
+        """从 JSON 字符串反序列化 Event，用于传输层。"""
+        raw = json.loads(data)
+        return Event(**raw)
 
 
 class EventBus:
@@ -52,7 +59,7 @@ class EventBus:
             source=source,
             payload=payload or {},
         )
-        # snapshot to allow handlers to (un)subscribe during dispatch
+        # 快照副本，允许 handler 在分发过程中 (取消) 订阅
         targets = [h for pat, h in self._subs if fnmatch.fnmatchcase(type, pat)]
         if not targets:
             return evt
@@ -61,7 +68,7 @@ class EventBus:
         )
         for r in results:
             if isinstance(r, Exception):
-                log.exception("subscriber raised: %s", r)
+                log.exception("订阅者异常: %s", r)
         return evt
 
     @staticmethod

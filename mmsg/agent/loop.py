@@ -1,7 +1,8 @@
-"""AgentLoop: perceive → think (LLM) → act (tools) → observe → repeat.
+"""AgentLoop: 感知 → 思考 (LLM) → 行动 (工具) → 观察 → 重复。
 
-Every state transition emits an event on the bus. No hidden side-channels.
+每次状态转换都通过事件总线发布事件，不留隐式侧通道。
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,7 +24,7 @@ class AgentLoop:
         llm: LLMProvider,
         memory: Memory,
         tools: dict[str, Tool] | None = None,
-        system_prompt: str = "You are a helpful assistant. Use tools when needed.",
+        system_prompt: str = "你是一个有用的助手。需要时请使用工具。",
         max_steps: int = 8,
         name: str = "agent",
     ) -> None:
@@ -55,43 +56,61 @@ class AgentLoop:
                  "tools": [t["function"]["name"] for t in tool_schemas or []]},
             )
             try:
-                resp = await self.llm.chat(msgs, tools=tool_schemas)
-            except Exception as ex:  # surface, don't swallow
+                chunks = self.llm.chat_stream(msgs, tools=tool_schemas)
+            except Exception as ex:
                 await self.bus.publish(
                     E.LLM_ERROR, self.name, {"step": step, "error": repr(ex)}
                 )
-                raise
+                # 不 raise，避免传输层异步任务静默崩溃；错误已通过事件通知客户端
+                return f"[错误] LLM 调用失败: {ex!r}"
+
+            collected_content = ""
+            collected_tool_calls: list[Any] = []
+            finish_reason: str | None = None
+            usage: dict[str, Any] = {}
+            async for chunk in chunks:
+                if chunk.text:
+                    collected_content += chunk.text
+                    await self.bus.publish(
+                        E.LLM_TOKEN, self.name, {"step": step, "text": chunk.text}
+                    )
+                if chunk.tool_calls:
+                    collected_tool_calls = chunk.tool_calls
+                if chunk.finish_reason:
+                    finish_reason = chunk.finish_reason
+                if chunk.usage:
+                    usage = chunk.usage
 
             await self.bus.publish(
                 E.LLM_RESPONSE,
                 self.name,
                 {
                     "step": step,
-                    "content": resp.message.content,
-                    "tool_calls": [tc.model_dump() for tc in resp.message.tool_calls],
-                    "finish_reason": resp.finish_reason,
-                    "usage": resp.usage,
+                    "content": collected_content,
+                    "tool_calls": [tc.model_dump() for tc in collected_tool_calls],
+                    "finish_reason": finish_reason,
+                    "usage": usage,
                 },
             )
 
-            # persist assistant turn (with any tool_calls) into memory
+            # 将 assistant 回合（含工具调用）写入记忆
             await self.memory.write(
                 MemoryRecord(
                     role="assistant",
-                    content=resp.message.content or "",
-                    meta={"tool_calls": [tc.model_dump() for tc in resp.message.tool_calls]},
+                    content=collected_content or "",
+                    meta={"tool_calls": [tc.model_dump() for tc in collected_tool_calls]},
                 )
             )
 
-            if not resp.message.tool_calls:
-                final_text = resp.message.content or ""
+            if not collected_tool_calls:
+                final_text = collected_content
                 await self.bus.publish(
                     E.AGENT_FINAL, self.name, {"text": final_text}
                 )
                 break
 
-            # act
-            for tc in resp.message.tool_calls:
+            # 行动：执行工具调用
+            for tc in collected_tool_calls:
                 await self.bus.publish(
                     E.TOOL_CALL,
                     self.name,
@@ -99,7 +118,7 @@ class AgentLoop:
                 )
                 tool = self.tools.get(tc.name)
                 if tool is None:
-                    result: Any = f"ERROR: tool '{tc.name}' not registered"
+                    result: Any = f"错误: 工具 '{tc.name}' 未注册"
                     await self.bus.publish(
                         E.TOOL_ERROR,
                         self.name,
@@ -109,7 +128,7 @@ class AgentLoop:
                     try:
                         result = await tool.run(**tc.arguments)
                     except Exception as ex:
-                        result = f"ERROR: {ex!r}"
+                        result = f"错误: {ex!r}"
                         await self.bus.publish(
                             E.TOOL_ERROR,
                             self.name,
@@ -129,7 +148,7 @@ class AgentLoop:
                     )
                 )
         else:
-            final_text = "[agent stopped: max_steps reached]"
+            final_text = "[agent 已停止: 达到最大步数]"
             await self.bus.publish(
                 E.AGENT_FINAL, self.name, {"text": final_text, "reason": "max_steps"}
             )

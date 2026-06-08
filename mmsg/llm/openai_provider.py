@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 
-from .base import ChatMessage, LLMProvider, LLMResponse, ToolCall
+from .base import ChatMessage, LLMProvider, LLMResponse, StreamChunk, ToolCall
 
 
 class OpenAIProvider(LLMProvider):
@@ -90,3 +91,74 @@ class OpenAIProvider(LLMProvider):
                 for tc in m.tool_calls
             ]
         return d
+
+    async def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamChunk]:
+        body: dict[str, Any] = {
+            "model": kwargs.pop("model", self.model),
+            "messages": [self._dump_msg(m) for m in messages],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = kwargs.pop("tool_choice", "auto")
+        body.update(kwargs)
+
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream(
+                "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
+            ) as resp:
+                resp.raise_for_status()
+                acc: dict[int, tuple[str, str]] = {}  # idx -> (id, name)
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    choice = chunk.get("choices", [{}])[0]
+                    delta = choice.get("delta") or {}
+
+                    text = delta.get("content", "")
+                    finish = choice.get("finish_reason")
+
+                    tcs: list[ToolCall] = []
+                    for tc in delta.get("tool_calls") or []:
+                        idx = tc.get("index", 0)
+                        fn = tc.get("function") or {}
+                        if idx not in acc:
+                            acc[idx] = (tc.get("id", ""), fn.get("name", ""))
+                        else:
+                            existing = acc[idx]
+                            if tc.get("id"):
+                                existing = (tc.get("id", ""), existing[1])
+                            if fn.get("name"):
+                                existing = (existing[0], fn.get("name"))
+                            acc[idx] = existing
+                        if finish:
+                            args_str = fn.get("arguments", "")
+                            try:
+                                args = json.loads(args_str) if args_str else {}
+                            except json.JSONDecodeError:
+                                args = {}
+                            tcs.append(ToolCall(id=acc[idx][0], name=acc[idx][1], arguments=args))
+
+                    yield StreamChunk(
+                        text=text or None,
+                        tool_calls=tcs if tcs else [],
+                        finish_reason=finish,
+                        usage=chunk.get("usage") or {},
+                        done=finish is not None,
+                    )
