@@ -18,4 +18,4 @@ build-backend = "setuptools.build_meta"
 include = ["mmsg*"]
 
 [project.scripts]
-mmsg = "mmsg.ui.cli:main"
+mmsg = "mmsg.__main__:main"

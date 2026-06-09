@@ -1,9 +1,5 @@
-"""入口：服务端模式  python -m mmsg.app --serve  或  单次批处理模式  python -m mmsg.app "问题" """
+"""Agent 核心启动逻辑：_serve / _batch 由 __main__.py 统一调度。"""
 from __future__ import annotations
-
-import argparse
-import asyncio
-import sys
 
 from dotenv import load_dotenv
 
@@ -72,21 +68,3 @@ async def _batch(user_input: str) -> None:
     agent = _build_agent(bus)
     await agent.run(user_input)
 
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="MMSG Agent")
-    parser.add_argument("--serve", action="store_true", help="以传输服务模式启动")
-    parser.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
-    parser.add_argument("--port", type=int, default=9090, help="监听端口（默认 9090）")
-    parser.add_argument("query", nargs="*", help="批处理模式下要发送的问题")
-    args = parser.parse_args()
-
-    if args.serve:
-        asyncio.run(_serve(args.host, args.port))
-    else:
-        q = " ".join(args.query) or "现在是几点？用 now 工具。"
-        asyncio.run(_batch(q))
-
-
-if __name__ == "__main__":
-    main()
