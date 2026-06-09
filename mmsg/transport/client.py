@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from ..bus.message import TRANSPORT_RAW, MessageBus
+
 log = logging.getLogger("mmsg.transport")
 
 
 async def connect_to_server(
-    bus,
+    bus: MessageBus,
     host: str = "127.0.0.1",
     port: int = 9090,
 ) -> asyncio.Task:
@@ -43,7 +45,6 @@ async def connect_to_server(
             data = line.decode().strip()
             if not data:
                 continue
-            # 以 "transport.raw" 事件注入，由上层反序列化处理
-            await bus.publish("transport.raw", "transport", {"data": data})
+            await bus.publish(TRANSPORT_RAW, "transport", {"data": data})
 
     return asyncio.create_task(run())

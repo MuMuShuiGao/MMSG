@@ -16,12 +16,12 @@ class OpenAIProvider(LLMProvider):
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",
+        model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float = 60.0,
     ) -> None:
-        self.model = model
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
         self.base_url = (base_url or os.getenv("OPENAI_BASE_URL")
                          or "https://api.openai.com/v1").rstrip("/")
@@ -111,10 +111,16 @@ class OpenAIProvider(LLMProvider):
 
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
+        import logging
+        _log = logging.getLogger("mmsg.llm")
+        _log.debug("LLM request body: %s", body)
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             async with client.stream(
                 "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
             ) as resp:
+                if resp.status_code != 200:
+                    _log.error("LLM HTTP %s: %s", resp.status_code, await resp.aread())
                 resp.raise_for_status()
                 acc: dict[int, tuple[str, str]] = {}  # idx -> (id, name)
                 async for line in resp.aiter_lines():

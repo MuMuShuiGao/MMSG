@@ -8,8 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..core import events as E
-from ..core.bus import EventBus
+from ..bus import agent as E
+from ..bus.agent import AgentBus
 from ..llm.base import ChatMessage, LLMProvider
 from ..memory.base import Memory, MemoryRecord
 from ..tools.base import Tool
@@ -20,7 +20,7 @@ log = logging.getLogger("mmsg.agent")
 class AgentLoop:
     def __init__(
         self,
-        bus: EventBus,
+        bus: AgentBus,
         llm: LLMProvider,
         memory: Memory,
         tools: dict[str, Tool] | None = None,
@@ -37,9 +37,6 @@ class AgentLoop:
         self.name = name
 
     async def run(self, user_input: str) -> str:
-        await self.bus.publish(
-            E.USER_INPUT, self.name, {"text": user_input}
-        )
         await self.memory.write(MemoryRecord(role="user", content=user_input))
 
         tool_schemas = [t.schema() for t in self.tools.values()] or None

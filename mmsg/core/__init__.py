@@ -1,4 +1,3 @@
-from .bus import Event, EventBus
 from .plugin import llm_registry, memory_registry, tool_registry
 
 import logging
@@ -18,8 +17,6 @@ def setup_logging(level: int = logging.INFO) -> None:
 
 
 __all__ = [
-    "Event",
-    "EventBus",
     "llm_registry",
     "memory_registry",
     "tool_registry",

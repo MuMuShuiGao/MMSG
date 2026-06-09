@@ -9,7 +9,8 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from ..core import EventBus, setup_logging
+from ..bus.message import MessageBus
+from ..core import setup_logging
 from ..transport import connect_to_server
 from .textual.app import ChatApp
 
@@ -18,7 +19,7 @@ def main() -> None:
     load_dotenv()
     setup_logging()
 
-    bus = EventBus()
+    bus = MessageBus()
     # 不在本地创建 AgentLoop，ChatApp 不再持有 agent 引用
     app = ChatApp(bus=bus)
 

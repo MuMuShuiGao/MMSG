@@ -10,11 +10,11 @@ import logging
 
 from textual.app import App
 
-from ...core import events as E
-from ...core.bus import Event, EventBus
+from ...bus.agent import LLM_TOKEN, LLM_ERROR, TOOL_CALL, TOOL_RESULT, TOOL_ERROR, AGENT_FINAL, LOOP_STEP
+from ...bus.eventbus import Event
+from ...bus.message import MessageBus, SESSION_RESET, TRANSPORT_RAW
 from .messages import (
     AgentFinal,
-    AgentStart,
     AgentTokenDelta,
     ClearScreen,
     StatusChange,
@@ -27,7 +27,7 @@ log = logging.getLogger("mmsg.bridge")
 
 
 class BusBridge:
-    def __init__(self, bus: EventBus, app: App) -> None:
+    def __init__(self, bus: MessageBus, app: App) -> None:
         self._bus = bus
         self._app = app
         self._current_step = 0
@@ -44,7 +44,7 @@ class BusBridge:
 
     def install(self) -> None:
         """注册 transport.raw 订阅，将服务端推送的原始 JSON 反序列化后分发。"""
-        self._bus.subscribe(E.TRANSPORT_RAW, self._on_raw)
+        self._bus.subscribe(TRANSPORT_RAW, self._on_raw)
 
     # ─── 反序列化 & 分发 ────────────────────────────
 
@@ -61,21 +61,21 @@ class BusBridge:
 
         # 按远程事件类型分发到对应 handler
         t = remote_evt.type
-        if t == E.LOOP_STEP:
+        if t == LOOP_STEP:
             await self._on_loop_step(remote_evt)
-        elif t == E.LLM_TOKEN:
+        elif t == LLM_TOKEN:
             await self._on_llm_token(remote_evt)
-        elif t == E.TOOL_CALL:
+        elif t == TOOL_CALL:
             await self._on_tool_call(remote_evt)
-        elif t == E.TOOL_RESULT:
+        elif t == TOOL_RESULT:
             await self._on_tool_result(remote_evt)
-        elif t == E.TOOL_ERROR:
+        elif t == TOOL_ERROR:
             await self._on_tool_error(remote_evt)
-        elif t == E.AGENT_FINAL:
+        elif t == AGENT_FINAL:
             await self._on_agent_final(remote_evt)
-        elif t == E.LLM_ERROR:
+        elif t == LLM_ERROR:
             await self._on_llm_error(remote_evt)
-        elif t == E.SESSION_RESET:
+        elif t == SESSION_RESET:
             await self._on_session_reset(remote_evt)
 
     # ─── 各事件 handler ─────────────────────────────

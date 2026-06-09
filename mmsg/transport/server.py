@@ -1,21 +1,21 @@
-"""传输层服务端：监听 TCP 端口，将 EventBus 事件以 JSON-lines 流推送给客户端，同时接收客户端发来的事件注入本地总线。"""
+"""传输层服务端：监听 TCP 端口，message_bus 事件推给客户端，客户端发来的事件注入 message_bus。"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from ..core.bus import Event
+from ..bus.eventbus import Event
+from ..bus.message import MessageBus
 
 log = logging.getLogger("mmsg.transport")
 
 
 async def run_tcp_server(
-    bus,
+    message_bus: MessageBus,
     host: str = "127.0.0.1",
     port: int = 9090,
 ) -> None:
-    """启动传输服务，阻塞直到被取消。"""
 
     async def handle_client(
         reader: asyncio.StreamReader,
@@ -24,9 +24,7 @@ async def run_tcp_server(
         addr = writer.get_extra_info("peername")
         log.info("客户端连接 %s", addr)
 
-        async def send(evt) -> None:
-            """把本地事件序列化为 JSON 行推给客户端。"""
-            # 不回传客户端发来的事件，防止回音循环
+        async def relay_to_client(evt: Event) -> None:
             if evt.source in ("ui", "transport"):
                 return
             try:
@@ -35,11 +33,11 @@ async def run_tcp_server(
             except Exception:
                 pass
 
-        unsub = bus.subscribe("*", send)
+        unsub = message_bus.subscribe("*", relay_to_client)
         try:
             while True:
                 line = await reader.readline()
-                if not line:  # EOF，客户端断开
+                if not line:
                     break
                 data = line.decode().strip()
                 if not data:
@@ -49,7 +47,7 @@ async def run_tcp_server(
                 except Exception:
                     log.debug("无法解析客户端数据: %r", data)
                     continue
-                await bus.publish(evt.type, evt.source, evt.payload)
+                await message_bus.publish(evt.type, evt.source, evt.payload)
         except (ConnectionResetError, asyncio.IncompleteReadError):
             pass
         finally:

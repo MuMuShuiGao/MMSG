@@ -10,7 +10,7 @@ from collections.abc import Callable, Coroutine
 
 from textual.app import App
 
-from ...core.bus import EventBus
+from ...bus.message import MESSAGE_INBOUND, MessageBus
 from .bridge import BusBridge
 from .commands import handle_command
 from .messages import UserSubmit
@@ -25,7 +25,7 @@ class ChatApp(App):
         ("escape", "focus_input", "聚焦输入"),
     ]
 
-    def __init__(self, bus: EventBus) -> None:
+    def __init__(self, bus: MessageBus) -> None:
         super().__init__()
         self._mmsg_bus = bus
         self._task: asyncio.Task | None = None
@@ -51,7 +51,7 @@ class ChatApp(App):
         # 显示用户消息到聊天区
         self.query_one(ChatLog).post_message(msg)
         # 通过传输层发送 user.input 到服务端
-        await self._mmsg_bus.publish("user.input", "ui", {"text": text})
+        await self._mmsg_bus.publish(MESSAGE_INBOUND, "ui", {"text": text})
 
     def action_cancel_or_exit(self) -> None:
         """如果后台任务在运行则取消，否则退出应用。"""

@@ -9,9 +9,11 @@
 ```
 mmsg/
 ├── agent/         # Agent 循环 — 核心推理周期
-├── core/          # 事件总线、事件定义、插件系统
+├── bus/           # 事件常量（agent 内部 + message 外部）
+├── core/          # 插件系统、日志
 ├── llm/           # LLM 抽象层（OpenAI provider）
 ├── memory/        # 分层记忆（工作记忆）
+├── router/        # SessionRouter — 桥接外部消息 ↔ agent 内部
 ├── observability/ # 可观测性（控制台输出）
 ├── tools/         # 工具基类 + echo 工具
 ├── transport/     # 客户端/服务端通信
@@ -22,8 +24,11 @@ mmsg/
 
 | 模块 | 作用 |
 |------|------|
-| `core/bus.py` | 中央事件总线，模块间通信 |
+| `core/bus.py` | EventBus 类 — 发布/订阅基础设施 |
+| `bus/agent.py` | Agent 内部事件常量（llm.*, tool.*, loop.* 等） |
+| `bus/message.py` | 外部消息事件常量（message.inbound/outbound, session.* 等） |
 | `core/plugin.py` | 插件注册与生命周期管理 |
+| `router/router.py` | SessionRouter — 桥接 message_bus ↔ agent_bus |
 | `agent/loop.py` | Agent 主推理循环 |
 | `llm/openai_provider.py` | OpenAI API 接入 |
 | `memory/working.py` | 短期工作记忆 |
@@ -41,5 +46,8 @@ mmsg/
 ## 入口
 
 ```bash
-mmsg  # 映射到 mmsg.ui.cli:main
+mmsg serve              # 启动服务端
+mmsg cli                # 启动 TUI 客户端
+mmsg --print "问题"     # 单次批处理模式
 ```
+入口统一在 `mmsg/__main__.py`，分别调度 `app.py` 服务端/批处理逻辑和 `ui/cli.py` TUI 客户端。
