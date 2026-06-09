@@ -22,7 +22,9 @@ async def connect_to_server(
     log.info("已连接传输服务 %s:%d", host, port)
 
     async def relay_to_server(evt) -> None:
-        """本地事件 → 序列化 → 发给服务端。"""
+        """本地事件 → 序列化 → 发给服务端。仅转发 UI 产生的事件。"""
+        if evt.source != "ui":
+            return
         try:
             writer.write(evt.model_dump_json().encode() + b"\n")
             await writer.drain()

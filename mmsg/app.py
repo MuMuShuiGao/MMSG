@@ -43,6 +43,8 @@ async def _serve(host: str, port: int) -> None:
 
     async def on_user_input(evt) -> None:
         """客户端发来 user.input → 新建 AgentLoop 处理本轮对话。"""
+        if evt.source != "ui":
+            return
         agent = _build_agent(bus)
         await agent.run(evt.payload.get("text", ""))
 

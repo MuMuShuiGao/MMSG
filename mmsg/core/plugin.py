@@ -14,6 +14,8 @@ class Registry:
     def register(self, name: str):
         def deco(cls: type[T]) -> type[T]:
             if name in self._items:
+                if self._items[name] is cls:
+                    return cls
                 raise ValueError(f"{self.kind} '{name}' already registered")
             self._items[name] = cls
             return cls

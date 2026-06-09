@@ -32,6 +32,16 @@ class BusBridge:
         self._app = app
         self._current_step = 0
 
+    @property
+    def _chat_log(self):
+        from .widgets import ChatLog
+        return self._app.query_one(ChatLog)
+
+    @property
+    def _status_bar(self):
+        from .widgets import StatusBar
+        return self._app.query_one(StatusBar)
+
     def install(self) -> None:
         """注册 transport.raw 订阅，将服务端推送的原始 JSON 反序列化后分发。"""
         self._bus.subscribe(E.TRANSPORT_RAW, self._on_raw)
@@ -73,17 +83,17 @@ class BusBridge:
     async def _on_loop_step(self, evt: Event) -> None:
         step = evt.payload.get("step", 0)
         self._current_step = step
-        self._app.post_message(AgentStart(step))
-        self._app.post_message(StatusChange("思考中..."))
+        self._chat_log.post_message(AgentStart(step))
+        self._status_bar.post_message(StatusChange("思考中..."))
 
     async def _on_llm_token(self, evt: Event) -> None:
         text = evt.payload.get("text", "")
         if text:
-            self._app.post_message(AgentTokenDelta(text))
+            self._chat_log.post_message(AgentTokenDelta(text))
 
     async def _on_tool_call(self, evt: Event) -> None:
         p = evt.payload
-        self._app.post_message(
+        self._chat_log.post_message(
             ToolCallStart(
                 step=p.get("step", 0),
                 tool_id=p.get("id", ""),
@@ -91,11 +101,11 @@ class BusBridge:
                 arguments=p.get("arguments", {}),
             )
         )
-        self._app.post_message(StatusChange(f"执行工具 {p.get('name', '')}..."))
+        self._status_bar.post_message(StatusChange(f"执行工具 {p.get('name', '')}..."))
 
     async def _on_tool_result(self, evt: Event) -> None:
         p = evt.payload
-        self._app.post_message(
+        self._chat_log.post_message(
             ToolCallResult(
                 tool_id=p.get("id", ""),
                 name=p.get("name", ""),
@@ -105,7 +115,7 @@ class BusBridge:
 
     async def _on_tool_error(self, evt: Event) -> None:
         p = evt.payload
-        self._app.post_message(
+        self._chat_log.post_message(
             ToolCallError(
                 tool_id=p.get("id", ""),
                 name=p.get("name", ""),
@@ -114,12 +124,12 @@ class BusBridge:
         )
 
     async def _on_agent_final(self, evt: Event) -> None:
-        self._app.post_message(AgentFinal(evt.payload.get("text", "")))
-        self._app.post_message(StatusChange("就绪"))
+        self._chat_log.post_message(AgentFinal(evt.payload.get("text", "")))
+        self._status_bar.post_message(StatusChange("就绪"))
 
     async def _on_llm_error(self, evt: Event) -> None:
         err = evt.payload.get("error", "")
-        self._app.post_message(StatusChange(f"错误: {err}"))
+        self._status_bar.post_message(StatusChange(f"错误: {err}"))
 
     async def _on_session_reset(self, evt: Event) -> None:
-        self._app.post_message(ClearScreen())
+        self._chat_log.post_message(ClearScreen())

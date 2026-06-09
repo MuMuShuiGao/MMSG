@@ -48,6 +48,8 @@ class ChatApp(App):
         if handle_command(text, self):
             return
 
+        # 显示用户消息到聊天区
+        self.query_one(ChatLog).post_message(msg)
         # 通过传输层发送 user.input 到服务端
         await self._mmsg_bus.publish("user.input", "ui", {"text": text})
 
