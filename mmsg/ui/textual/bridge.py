@@ -15,6 +15,7 @@ from ...bus.eventbus import Event
 from ...bus.message import MessageBus, SESSION_RESET, TRANSPORT_RAW
 from .messages import (
     AgentFinal,
+    AgentStart,
     AgentTokenDelta,
     ClearScreen,
     StatusChange,
