@@ -21,11 +21,14 @@ class OpenAIProvider(LLMProvider):
         base_url: str | None = None,
         timeout: float = 60.0,
     ) -> None:
-        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
-        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL")
-                         or "https://api.openai.com/v1").rstrip("/")
+        self.model = model or os.getenv("OPENAI_MODEL") or self._missing("OPENAI_MODEL")
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or self._missing("OPENAI_API_KEY")
+        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or self._missing("OPENAI_BASE_URL")).rstrip("/")
         self.timeout = timeout
+
+    @staticmethod
+    def _missing(name: str):
+        raise RuntimeError(f"配置缺失: 请设置环境变量 {name}")
 
     async def chat(
         self,

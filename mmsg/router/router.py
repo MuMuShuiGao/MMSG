@@ -40,7 +40,11 @@ class SessionRouter:
 
         agent = AgentLoop(bus=self._agent_bus, llm=llm, memory=mem, tools=tools)
         result = await agent.run(text)
-        await self._message_bus.publish(MESSAGE_OUTBOUND, "router", {"text": result})
+
+        out_payload: dict = {"text": result}
+        if payload.get("openid"):
+            out_payload["openid"] = payload["openid"]
+        await self._message_bus.publish(MESSAGE_OUTBOUND, evt.source, out_payload)
 
     async def _bridge_observable(self, evt) -> None:
         if evt.type in _OBSERVABLE_TYPES:
