@@ -1,4 +1,4 @@
-"""Plugin registry. Plugins self-register by decorator. Categories: llm, tool, memory."""
+"""插件注册表。插件通过装饰器自注册。类别：llm、tool。"""
 from __future__ import annotations
 
 from typing import Any, TypeVar
@@ -35,4 +35,3 @@ class Registry:
 
 llm_registry = Registry("llm")
 tool_registry = Registry("tool")
-memory_registry = Registry("memory")

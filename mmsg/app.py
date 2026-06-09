@@ -8,9 +8,8 @@ from dotenv import load_dotenv
 
 from .bus.agent import AgentBus
 from .bus.message import MESSAGE_INBOUND, SESSION_RESET, MessageBus
-from .core import llm_registry, memory_registry, setup_logging, tool_registry
+from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
-from .memory import WorkingMemory
 from .router import SessionRouter
 from .observability import attach_console_sink
 from .tools import EchoTool, NowTool
@@ -24,7 +23,6 @@ def _register_plugins() -> None:
     tool_registry.register("echo")(EchoTool)
     tool_registry.register("now")(NowTool)
     llm_registry.register("openai")(OpenAIProvider)
-    memory_registry.register("working")(WorkingMemory)
 
 
 async def _start_channels(message_bus: MessageBus) -> None:

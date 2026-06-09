@@ -1,4 +1,4 @@
-"""Short-term working memory: bounded ring buffer of recent turns."""
+"""短期工作记忆：定长环形缓冲区，保留最近若干轮对话原文。"""
 from __future__ import annotations
 
 from collections import deque
@@ -16,7 +16,7 @@ class WorkingMemory(Memory):
         self.buf.append(record)
 
     async def recall(self, query: str, k: int = 8) -> list[MemoryRecord]:
-        # working memory ignores query; returns most-recent k in chronological order
+        # 工作记忆忽略查询内容；按时间顺序返回最近的 k 条记录
         if k <= 0:
             return []
         items = list(self.buf)[-k:]

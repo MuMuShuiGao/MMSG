@@ -1,4 +1,4 @@
-from .plugin import llm_registry, memory_registry, tool_registry
+from .plugin import llm_registry, tool_registry
 
 import logging
 
@@ -18,7 +18,6 @@ def setup_logging(level: int = logging.INFO) -> None:
 
 __all__ = [
     "llm_registry",
-    "memory_registry",
     "tool_registry",
     "setup_logging",
 ]

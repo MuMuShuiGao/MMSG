@@ -20,6 +20,8 @@ class SessionRouter:
     def __init__(self, agent_bus: AgentBus, message_bus: MessageBus) -> None:
         self._agent_bus = agent_bus
         self._message_bus = message_bus
+        from ..memory import create_memory
+        self._memory = create_memory()
 
     def install(self) -> None:
         self._message_bus.subscribe(MESSAGE_INBOUND, self._on_inbound)
@@ -31,14 +33,12 @@ class SessionRouter:
         if not text:
             return
         from ..agent import AgentLoop
-        from ..core import llm_registry, memory_registry, tool_registry
-        from ..memory import LayeredMemory
+        from ..core import llm_registry, tool_registry
 
         llm = llm_registry.create("openai")
-        mem = LayeredMemory([memory_registry.create("working", capacity=64)])
         tools = {name: tool_registry.create(name) for name in tool_registry.names()}
 
-        agent = AgentLoop(bus=self._agent_bus, llm=llm, memory=mem, tools=tools)
+        agent = AgentLoop(bus=self._agent_bus, llm=llm, memory=self._memory, tools=tools)
         result = await agent.run(text)
 
         out_payload: dict = {"text": result}

@@ -1,11 +1,11 @@
-"""Layered memory contract.
+"""分层记忆协议。
 
-Layer responsibilities:
-  - working : last N turns verbatim (this file impl in working.py)
-  - episodic: persisted past sessions (future: sqlite)
-  - semantic: vector-recalled facts (future: chroma / lancedb)
+各层职责：
+  - working  : 最近 N 轮对话原文（实现在 working.py）
+  - episodic : 持久化历史会话（计划：sqlite）
+  - semantic : 向量检索的事实知识（计划：chroma / lancedb）
 
-LayeredMemory composes multiple layers and merges recall results.
+LayeredMemory 组合多层记忆并合并召回结果。
 """
 from __future__ import annotations
 
