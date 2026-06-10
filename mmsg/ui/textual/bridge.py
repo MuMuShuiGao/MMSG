@@ -10,16 +10,14 @@ import logging
 
 from textual.app import App
 
-from ...bus.agent import LLM_TOKEN, LLM_ERROR, TOOL_CALL, TOOL_RESULT, TOOL_ERROR, AGENT_FINAL, LOOP_STEP
+from ...bus.agent import AgentEvent
 from ...bus.eventbus import Event
 from ...bus.message import MessageBus, SESSION_RESET, TRANSPORT_RAW
 from .messages import (
     AgentFinal,
     AgentStart,
-    AgentTokenDelta,
     ClearScreen,
     StatusChange,
-    ToolCallError,
     ToolCallResult,
     ToolCallStart,
 )
@@ -62,20 +60,14 @@ class BusBridge:
 
         # 按远程事件类型分发到对应 handler
         t = remote_evt.type
-        if t == LOOP_STEP:
+        if t == AgentEvent.AfterStep:
             await self._on_loop_step(remote_evt)
-        elif t == LLM_TOKEN:
-            await self._on_llm_token(remote_evt)
-        elif t == TOOL_CALL:
+        elif t == AgentEvent.BeforeToolCall:
             await self._on_tool_call(remote_evt)
-        elif t == TOOL_RESULT:
+        elif t == AgentEvent.AfterToolCall:
             await self._on_tool_result(remote_evt)
-        elif t == TOOL_ERROR:
-            await self._on_tool_error(remote_evt)
-        elif t == AGENT_FINAL:
-            await self._on_agent_final(remote_evt)
-        elif t == LLM_ERROR:
-            await self._on_llm_error(remote_evt)
+        elif t == AgentEvent.AfterTurn:
+            await self._on_after_turn(remote_evt)
         elif t == SESSION_RESET:
             await self._on_session_reset(remote_evt)
 
@@ -84,13 +76,12 @@ class BusBridge:
     async def _on_loop_step(self, evt: Event) -> None:
         step = evt.payload.get("step", 0)
         self._current_step = step
-        self._chat_log.post_message(AgentStart(step))
-        self._status_bar.post_message(StatusChange("思考中..."))
-
-    async def _on_llm_token(self, evt: Event) -> None:
-        text = evt.payload.get("text", "")
-        if text:
-            self._chat_log.post_message(AgentTokenDelta(text))
+        if evt.payload.get("final"):
+            self._chat_log.post_message(AgentFinal(evt.payload.get("text", "")))
+            self._status_bar.post_message(StatusChange("就绪"))
+        else:
+            self._chat_log.post_message(AgentStart(step))
+            self._status_bar.post_message(StatusChange("思考中..."))
 
     async def _on_tool_call(self, evt: Event) -> None:
         p = evt.payload
@@ -114,23 +105,8 @@ class BusBridge:
             )
         )
 
-    async def _on_tool_error(self, evt: Event) -> None:
-        p = evt.payload
-        self._chat_log.post_message(
-            ToolCallError(
-                tool_id=p.get("id", ""),
-                name=p.get("name", ""),
-                error=p.get("error", ""),
-            )
-        )
-
-    async def _on_agent_final(self, evt: Event) -> None:
-        self._chat_log.post_message(AgentFinal(evt.payload.get("text", "")))
-        self._status_bar.post_message(StatusChange("就绪"))
-
-    async def _on_llm_error(self, evt: Event) -> None:
-        err = evt.payload.get("error", "")
-        self._status_bar.post_message(StatusChange(f"错误: {err}"))
-
     async def _on_session_reset(self, evt: Event) -> None:
         self._chat_log.post_message(ClearScreen())
+
+    async def _on_after_turn(self, evt: Event) -> None:
+        self._status_bar.post_message(StatusChange("就绪"))

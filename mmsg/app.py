@@ -52,7 +52,7 @@ async def _serve(host: str, port: int) -> None:
     ChatRecorder(store, agent_bus, message_bus).install()
 
     async def on_session_reset(evt) -> None:
-        await message_bus.publish(SESSION_RESET, "server", {})
+        await message_bus.observe(SESSION_RESET, "server", {})
 
     message_bus.subscribe(SESSION_RESET, on_session_reset)
 
@@ -75,4 +75,4 @@ async def _batch(user_input: str) -> None:
     store = SqliteStore(workspace_path() / "history.db")
     ChatRecorder(store, agent_bus, message_bus).install()
 
-    await message_bus.publish(MESSAGE_INBOUND, "batch", {"text": user_input})
+    await message_bus.observe(MESSAGE_INBOUND, "batch", {"text": user_input})

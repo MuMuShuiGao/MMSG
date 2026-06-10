@@ -23,17 +23,9 @@ class ToolBlock(Static):
     def set_result(self, result: str) -> None:
         t = Text()
         t.append("  → ", style="green")
-        # 截断过长结果
         if len(result) > 300:
             result = result[:300] + "..."
         t.append(result, style="dim")
-        self._body.append(t)
-        self._render()
-
-    def set_error(self, error: str) -> None:
-        t = Text()
-        t.append("  ✗ ", style="red")
-        t.append(error, style="red dim")
         self._body.append(t)
         self._render()
 

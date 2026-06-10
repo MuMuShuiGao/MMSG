@@ -49,4 +49,4 @@ async def _publish_reset(app: App) -> None:
     """通过传输层发布 session.reset 到服务端。"""
     bus = getattr(app, "_mmsg_bus", None)
     if bus:
-        await bus.publish("session.reset", "ui", {})
+        await bus.observe("session.reset", "ui", {})

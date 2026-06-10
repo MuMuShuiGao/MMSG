@@ -51,7 +51,7 @@ class ChatApp(App):
         # 显示用户消息到聊天区
         self.query_one(ChatLog).post_message(msg)
         # 通过传输层发送 user.input 到服务端
-        await self._mmsg_bus.publish(MESSAGE_INBOUND, "ui", {"text": text})
+        await self._mmsg_bus.observe(MESSAGE_INBOUND, "ui", {"text": text})
 
     def action_cancel_or_exit(self) -> None:
         """如果后台任务在运行则取消，否则退出应用。"""

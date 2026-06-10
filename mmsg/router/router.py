@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import logging
 
-from ..bus.agent import LLM_ERROR, LLM_TOKEN, LOOP_STEP, TOOL_CALL, TOOL_ERROR, TOOL_RESULT, AGENT_FINAL, AgentBus
+from ..bus.agent import AgentEvent, AgentBus
 from ..bus.message import MESSAGE_INBOUND, MESSAGE_OUTBOUND, MessageBus
 
 log = logging.getLogger("mmsg.router")
 
-_OBSERVABLE_TYPES = {LLM_TOKEN, LLM_ERROR, LOOP_STEP, TOOL_CALL, TOOL_RESULT, TOOL_ERROR, AGENT_FINAL}
+_OBSERVABLE_TYPES = {AgentEvent.BeforeToolCall, AgentEvent.AfterToolCall, AgentEvent.AfterStep, AgentEvent.AfterTurn}
 
 
 class SessionRouter:
@@ -44,8 +44,8 @@ class SessionRouter:
         out_payload: dict = {"text": result}
         if payload.get("openid"):
             out_payload["openid"] = payload["openid"]
-        await self._message_bus.publish(MESSAGE_OUTBOUND, evt.source, out_payload)
+            await self._message_bus.observe(MESSAGE_OUTBOUND, evt.source, out_payload)
 
     async def _bridge_observable(self, evt) -> None:
         if evt.type in _OBSERVABLE_TYPES:
-            await self._message_bus.publish(evt.type, evt.source, evt.payload)
+            await self._message_bus.observe(evt.type, evt.source, evt.payload)

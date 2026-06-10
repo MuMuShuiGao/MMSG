@@ -45,6 +45,6 @@ async def connect_to_server(
             data = line.decode().strip()
             if not data:
                 continue
-            await bus.publish(TRANSPORT_RAW, "transport", {"data": data})
+            await bus.observe(TRANSPORT_RAW, "transport", {"data": data})
 
     return asyncio.create_task(run())

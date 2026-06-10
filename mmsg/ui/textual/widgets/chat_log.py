@@ -8,9 +8,7 @@ from textual.widgets import Static
 from ..messages import (
     AgentFinal,
     AgentStart,
-    AgentTokenDelta,
     ClearScreen,
-    ToolCallError,
     ToolCallResult,
     ToolCallStart,
     UserSubmit,
@@ -42,11 +40,6 @@ class ChatLog(VerticalScroll):
         self._active_assistant = AssistantMsg()
         self.mount(self._active_assistant)
 
-    def on_agent_token_delta(self, msg: AgentTokenDelta) -> None:
-        if self._active_assistant:
-            self._active_assistant.append_token(msg.text)
-            self.scroll_end(animate=False)
-
     def on_tool_call_start(self, msg: ToolCallStart) -> None:
         block = ToolBlock(msg.tool_id, msg.name, msg.arguments)
         self._tool_blocks[msg.tool_id] = block
@@ -56,11 +49,6 @@ class ChatLog(VerticalScroll):
         block = self._tool_blocks.get(msg.tool_id)
         if block:
             block.set_result(msg.result)
-
-    def on_tool_call_error(self, msg: ToolCallError) -> None:
-        block = self._tool_blocks.get(msg.tool_id)
-        if block:
-            block.set_error(msg.error)
 
     def on_agent_final(self, msg: AgentFinal) -> None:
         self._active_assistant = None

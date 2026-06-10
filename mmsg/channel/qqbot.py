@@ -104,7 +104,7 @@ class QQBotChannel:
         if not openid or not text:
             return
         log.info("C2C msg from %s: %s", openid, text[:60])
-        await self._bus.publish(
+        await self._bus.observe(
             MESSAGE_INBOUND,
             f"qqbot:{openid}",
             {"text": text, "openid": openid},

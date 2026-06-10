@@ -47,7 +47,7 @@ async def run_tcp_server(
                 except Exception:
                     log.debug("无法解析客户端数据: %r", data)
                     continue
-                await message_bus.publish(evt.type, evt.source, evt.payload)
+                await message_bus.observe(evt.type, evt.source, evt.payload)
         except (ConnectionResetError, asyncio.IncompleteReadError):
             pass
         finally:

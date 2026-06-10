@@ -17,13 +17,6 @@ class AgentStart(Message):
         self.step = step
 
 
-class AgentTokenDelta(Message):
-    """LLM 流式输出的 token。"""
-    def __init__(self, text: str) -> None:
-        super().__init__()
-        self.text = text
-
-
 class ToolCallStart(Message):
     """工具调用发起。"""
     def __init__(self, step: int, tool_id: str, name: str, arguments: dict) -> None:
@@ -41,15 +34,6 @@ class ToolCallResult(Message):
         self.tool_id = tool_id
         self.name = name
         self.result = result
-
-
-class ToolCallError(Message):
-    """工具调用出错。"""
-    def __init__(self, tool_id: str, name: str, error: str) -> None:
-        super().__init__()
-        self.tool_id = tool_id
-        self.name = name
-        self.error = error
 
 
 class AgentFinal(Message):

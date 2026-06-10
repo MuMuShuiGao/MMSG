@@ -8,8 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..bus import agent as E
-from ..bus.agent import AgentBus
+from ..bus.agent import AgentEvent, AgentBus
 from ..llm.base import ChatMessage, LLMProvider
 from ..memory.base import Memory, MemoryRecord
 from ..tools.base import Tool
@@ -42,12 +41,13 @@ class AgentLoop:
         tool_schemas = [t.schema() for t in self.tools.values()] or None
         final_text = ""
 
+        await self.bus.observe(AgentEvent.BeforeTurn, self.name, {})
+
         for step in range(1, self.max_steps + 1):
-            await self.bus.publish(E.LOOP_STEP, self.name, {"step": step})
             msgs = await self._assemble_messages()
 
-            await self.bus.publish(
-                E.LLM_REQUEST,
+            req_evt = await self.bus.intercept(
+                AgentEvent.BeforeStep,
                 self.name,
                 {"step": step, "messages": [m.model_dump() for m in msgs],
                  "tools": [t["function"]["name"] for t in tool_schemas or []]},
@@ -55,10 +55,6 @@ class AgentLoop:
             try:
                 chunks = self.llm.chat_stream(msgs, tools=tool_schemas)
             except Exception as ex:
-                await self.bus.publish(
-                    E.LLM_ERROR, self.name, {"step": step, "error": repr(ex)}
-                )
-                # 不 raise，避免传输层异步任务静默崩溃；错误已通过事件通知客户端
                 return f"[错误] LLM 调用失败: {ex!r}"
 
             collected_content = ""
@@ -68,9 +64,6 @@ class AgentLoop:
             async for chunk in chunks:
                 if chunk.text:
                     collected_content += chunk.text
-                    await self.bus.publish(
-                        E.LLM_TOKEN, self.name, {"step": step, "text": chunk.text}
-                    )
                 if chunk.tool_calls:
                     collected_tool_calls = chunk.tool_calls
                 if chunk.finish_reason:
@@ -78,8 +71,8 @@ class AgentLoop:
                 if chunk.usage:
                     usage = chunk.usage
 
-            await self.bus.publish(
-                E.LLM_RESPONSE,
+            resp_evt = await self.bus.intercept(
+                AgentEvent.AfterReasoning,
                 self.name,
                 {
                     "step": step,
@@ -89,8 +82,13 @@ class AgentLoop:
                     "usage": usage,
                 },
             )
+            collected_content = resp_evt.payload.get("content", collected_content)
+            collected_tool_calls_raw = resp_evt.payload.get("tool_calls", [])
+            collected_tool_calls = [
+                tc for tc in collected_tool_calls
+                if tc.model_dump() in collected_tool_calls_raw
+            ]
 
-            # 将 assistant 回合（含工具调用）写入记忆
             await self.memory.write(
                 MemoryRecord(
                     role="assistant",
@@ -101,42 +99,26 @@ class AgentLoop:
 
             if not collected_tool_calls:
                 final_text = collected_content
-                await self.bus.publish(
-                    E.AGENT_FINAL, self.name, {"text": final_text}
-                )
+                await self.bus.observe(AgentEvent.AfterStep, self.name, {
+                    "step": step, "final": True, "text": final_text,
+                })
                 break
 
-            # 行动：执行工具调用
             for tc in collected_tool_calls:
-                await self.bus.publish(
-                    E.TOOL_CALL,
+                await self.bus.observe(
+                    AgentEvent.BeforeToolCall,
                     self.name,
                     {"step": step, "id": tc.id, "name": tc.name, "arguments": tc.arguments},
                 )
                 tool = self.tools.get(tc.name)
                 if tool is None:
                     result: Any = f"错误: 工具 '{tc.name}' 未注册"
-                    await self.bus.publish(
-                        E.TOOL_ERROR,
-                        self.name,
-                        {"id": tc.id, "name": tc.name, "error": result},
-                    )
                 else:
                     try:
                         result = await tool.run(**tc.arguments)
                     except Exception as ex:
                         result = f"错误: {ex!r}"
-                        await self.bus.publish(
-                            E.TOOL_ERROR,
-                            self.name,
-                            {"id": tc.id, "name": tc.name, "error": result},
-                        )
 
-                await self.bus.publish(
-                    E.TOOL_RESULT,
-                    self.name,
-                    {"id": tc.id, "name": tc.name, "result": str(result)},
-                )
                 await self.memory.write(
                     MemoryRecord(
                         role="tool",
@@ -144,13 +126,17 @@ class AgentLoop:
                         meta={"tool_call_id": tc.id, "name": tc.name},
                     )
                 )
-        else:
-            final_text = "[agent 已停止: 达到最大步数]"
-            await self.bus.publish(
-                E.AGENT_FINAL, self.name, {"text": final_text, "reason": "max_steps"}
-            )
+                await self.bus.observe(
+                    AgentEvent.AfterToolCall,
+                    self.name,
+                    {"id": tc.id, "name": tc.name, "result": str(result)},
+                )
 
-        await self.bus.publish(E.LOOP_END, self.name, {"final": final_text})
+            await self.bus.observe(AgentEvent.AfterStep, self.name, {
+                "step": step, "final": False,
+            })
+
+        await self.bus.observe(AgentEvent.AfterTurn, self.name, {"final": final_text})
         return final_text
 
     async def _assemble_messages(self) -> list[ChatMessage]:

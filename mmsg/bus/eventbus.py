@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 log = logging.getLogger("mmsg.bus")
 
-Handler = Callable[["Event"], Awaitable[None]]
+ObserverFn = Callable[["Event"], Awaitable[None]]
+InterceptorFn = Callable[["Event"], Awaitable["Event"]]
 
 
 class Event(BaseModel):
@@ -33,34 +34,43 @@ class Event(BaseModel):
 
 class EventBus:
     def __init__(self) -> None:
-        self._subs: list[tuple[str, Handler]] = []
+        self._observers: list[tuple[str, ObserverFn]] = []
+        self._interceptors: list[tuple[str, InterceptorFn]] = []
         self._lock = asyncio.Lock()
 
-    def subscribe(self, pattern: str, handler: Handler) -> Callable[[], None]:
+    def subscribe(self, pattern: str, handler: ObserverFn) -> Callable[[], None]:
         entry = (pattern, handler)
-        self._subs.append(entry)
+        self._observers.append(entry)
 
         def _unsub() -> None:
             try:
-                self._subs.remove(entry)
+                self._observers.remove(entry)
             except ValueError:
                 pass
 
         return _unsub
 
-    async def publish(
+    def subscribe_intercept(self, pattern: str, handler: InterceptorFn) -> Callable[[], None]:
+        entry = (pattern, handler)
+        self._interceptors.append(entry)
+
+        def _unsub() -> None:
+            try:
+                self._interceptors.remove(entry)
+            except ValueError:
+                pass
+
+        return _unsub
+
+    async def observe(
         self,
         type: str,
         source: str,
         payload: dict[str, Any] | None = None,
     ) -> Event:
-        evt = Event(
-            type=type,
-            source=source,
-            payload=payload or {},
-        )
-        # 快照副本，允许 handler 在分发过程中 (取消) 订阅
-        targets = [h for pat, h in self._subs if fnmatch.fnmatchcase(type, pat)]
+        """Observer: 并行通知,不返回值。纯观察,不改管道。"""
+        evt = Event(type=type, source=source, payload=payload or {})
+        targets = [h for pat, h in self._observers if fnmatch.fnmatchcase(type, pat)]
         if not targets:
             return evt
         results = await asyncio.gather(
@@ -71,6 +81,19 @@ class EventBus:
                 log.exception("订阅者异常: %s", r)
         return evt
 
+    async def intercept(
+        self,
+        type: str,
+        source: str,
+        payload: dict[str, Any] | None = None,
+    ) -> Event:
+        """Interceptor: 顺序执行,返回新 payload 改写管道。异常抛给调用方。"""
+        evt = Event(type=type, source=source, payload=payload or {})
+        for pat, h in self._interceptors:
+            if fnmatch.fnmatchcase(type, pat):
+                evt = await h(evt)
+        return evt
+
     @staticmethod
-    async def _safe(handler: Handler, evt: Event) -> None:
+    async def _safe(handler: ObserverFn, evt: Event) -> None:
         await handler(evt)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from ..bus.agent import AgentBus, LLM_RESPONSE, TOOL_RESULT
+from ..bus.agent import AgentEvent, AgentBus
 from ..bus.message import MESSAGE_INBOUND, MESSAGE_OUTBOUND, SESSION_RESET, MessageBus
 from .models import Message
 from .sqlite import SqliteStore
@@ -24,8 +24,8 @@ class ChatRecorder:
         self._message_bus.subscribe(MESSAGE_INBOUND, self._on_user_message)
         self._message_bus.subscribe(MESSAGE_OUTBOUND, self._on_outbound)
         self._message_bus.subscribe(SESSION_RESET, self._on_session_reset)
-        self._agent_bus.subscribe(LLM_RESPONSE, self._on_llm_response)
-        self._agent_bus.subscribe(TOOL_RESULT, self._on_tool_result)
+        self._agent_bus.subscribe(AgentEvent.AfterReasoning, self._on_llm_response)
+        self._agent_bus.subscribe(AgentEvent.AfterToolCall, self._on_tool_result)
 
     # ---- session ----
 
