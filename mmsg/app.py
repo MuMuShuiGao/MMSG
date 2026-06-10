@@ -5,11 +5,12 @@ import logging
 
 from .bus.agent import AgentBus
 from .bus.message import MESSAGE_INBOUND, SESSION_RESET, MessageBus
-from .config import qqbot as _qqbot
+from .config import qqbot as _qqbot, workspace_path
 from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
 from .router import SessionRouter
 from .observability import attach_console_sink
+from .storage import ChatRecorder, SqliteStore
 from .tools import EchoTool, NowTool
 from .transport import run_tcp_server
 
@@ -37,6 +38,7 @@ async def _start_channels(message_bus: MessageBus) -> None:
 
 
 async def _serve(host: str, port: int) -> None:
+    workspace_path().mkdir(parents=True, exist_ok=True)
     setup_logging()
     _register_plugins()
 
@@ -45,6 +47,9 @@ async def _serve(host: str, port: int) -> None:
     attach_console_sink(agent_bus, verbose=False)
 
     SessionRouter(agent_bus, message_bus).install()
+
+    store = SqliteStore(workspace_path() / "history.db")
+    ChatRecorder(store, agent_bus, message_bus).install()
 
     async def on_session_reset(evt) -> None:
         await message_bus.publish(SESSION_RESET, "server", {})
@@ -57,6 +62,7 @@ async def _serve(host: str, port: int) -> None:
 
 
 async def _batch(user_input: str) -> None:
+    workspace_path().mkdir(parents=True, exist_ok=True)
     setup_logging()
     _register_plugins()
 
@@ -65,4 +71,8 @@ async def _batch(user_input: str) -> None:
     attach_console_sink(agent_bus, verbose=False)
 
     SessionRouter(agent_bus, message_bus).install()
+
+    store = SqliteStore(workspace_path() / "history.db")
+    ChatRecorder(store, agent_bus, message_bus).install()
+
     await message_bus.publish(MESSAGE_INBOUND, "batch", {"text": user_input})
