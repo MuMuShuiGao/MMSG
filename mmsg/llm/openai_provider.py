@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 
+from ..config import llm as _cfg
 from .base import ChatMessage, LLMProvider, LLMResponse, StreamChunk, ToolCall
 
 
@@ -21,14 +21,14 @@ class OpenAIProvider(LLMProvider):
         base_url: str | None = None,
         timeout: float = 60.0,
     ) -> None:
-        self.model = model or os.getenv("OPENAI_MODEL") or self._missing("OPENAI_MODEL")
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or self._missing("OPENAI_API_KEY")
-        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or self._missing("OPENAI_BASE_URL")).rstrip("/")
+        self.model = model or _cfg("model") or self._missing("llm.model")
+        self.api_key = api_key or _cfg("api_key") or self._missing("llm.api_key")
+        self.base_url = (base_url or _cfg("base_url") or self._missing("llm.base_url")).rstrip("/")
         self.timeout = timeout
 
     @staticmethod
     def _missing(name: str):
-        raise RuntimeError(f"配置缺失: 请设置环境变量 {name}")
+        raise RuntimeError(f"配置缺失: {name} 请在 config.toml 中设置")
 
     async def chat(
         self,

@@ -1,4 +1,6 @@
 .env
+config.toml
 __pycache__/
 *.egg-info/
-mmsg.log  
+mmsg.log
+
