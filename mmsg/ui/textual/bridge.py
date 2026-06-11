@@ -11,8 +11,8 @@ import logging
 from textual.app import App
 
 from ...bus.agent import AgentEvent
-from ...bus.eventbus import Event
-from ...bus.message import MessageBus, SESSION_RESET, TRANSPORT_RAW
+from ...bus.eventbus import Event, EventBus
+from ...bus.messagebus import SESSION_RESET, TRANSPORT_RAW
 from .messages import (
     AgentFinal,
     AgentStart,
@@ -26,7 +26,7 @@ log = logging.getLogger("mmsg.bridge")
 
 
 class BusBridge:
-    def __init__(self, bus: MessageBus, app: App) -> None:
+    def __init__(self, bus: EventBus, app: App) -> None:
         self._bus = bus
         self._app = app
         self._current_step = 0

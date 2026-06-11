@@ -10,7 +10,8 @@ from collections.abc import Callable, Coroutine
 
 from textual.app import App
 
-from ...bus.message import MESSAGE_INBOUND, MessageBus
+from ...bus.eventbus import EventBus
+from ...bus.messagebus import MESSAGE_INBOUND
 from .bridge import BusBridge
 from .commands import handle_command
 from .messages import UserSubmit
@@ -25,7 +26,7 @@ class ChatApp(App):
         ("escape", "focus_input", "聚焦输入"),
     ]
 
-    def __init__(self, bus: MessageBus) -> None:
+    def __init__(self, bus: EventBus) -> None:
         super().__init__()
         self._mmsg_bus = bus
         self._task: asyncio.Task | None = None

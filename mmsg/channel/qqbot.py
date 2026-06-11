@@ -1,4 +1,4 @@
-"""QQBot 私聊通道：WS 收消息 → message_bus → REST 发消息"""
+"""QQBot 私聊通道：WS 收消息 → publish_inbound → REST 发消息 ← subscribe_outbound"""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ from typing import Any
 import httpx
 import websockets
 
-from ..bus.eventbus import Event
-from ..bus.message import MESSAGE_INBOUND, MESSAGE_OUTBOUND, MessageBus
+from ..bus.messagebus import MessageBus, OutboundItem
 
 log = logging.getLogger("mmsg.channel.qqbot")
 
@@ -30,7 +29,7 @@ class QQBotChannel:
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        self._bus.subscribe(MESSAGE_OUTBOUND, self._on_outbound)
+        self._bus.subscribe_outbound("qqbot:*", self._on_outbound)
         self._task = asyncio.create_task(self._ws_loop())
         log.info("QQBot channel started")
 
@@ -104,20 +103,19 @@ class QQBotChannel:
         if not openid or not text:
             return
         log.info("C2C msg from %s: %s", openid, text[:60])
-        await self._bus.observe(
-            MESSAGE_INBOUND,
+        await self._bus.publish_inbound(
             f"qqbot:{openid}",
             {"text": text, "openid": openid},
         )
 
     # ---- REST send ----
 
-    async def _on_outbound(self, evt: Event) -> None:
-        openid = evt.payload.get("openid")
-        text = evt.payload.get("text", "")
+    async def _on_outbound(self, item: OutboundItem) -> None:
+        openid = item.payload.get("openid")
+        text = item.payload.get("text", "")
         if not openid or not text:
             return
-        if not evt.source.startswith("qqbot:"):
+        if not item.source.startswith("qqbot:"):
             return
         token = await self._access_token()
         await self._api("POST", f"/v2/users/{openid}/messages", {

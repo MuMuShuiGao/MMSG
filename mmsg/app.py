@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from .bus.agent import AgentBus
-from .bus.message import MESSAGE_INBOUND, SESSION_RESET, MessageBus
+from .bus.messagebus import MessageBus, SESSION_RESET
 from .config import qqbot as _qqbot, workspace_path
 from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
@@ -49,11 +49,6 @@ async def _serve(host: str, port: int) -> None:
     store = SqliteStore(workspace_path() / "history.db")
     SessionRouter(agent_bus, message_bus, storage=store).install()
 
-    async def on_session_reset(evt) -> None:
-        await message_bus.observe(SESSION_RESET, "server", {})
-
-    message_bus.subscribe(SESSION_RESET, on_session_reset)
-
     await _start_channels(message_bus)
 
     await run_tcp_server(message_bus, host=host, port=port)
@@ -69,6 +64,8 @@ async def _batch(user_input: str) -> None:
     attach_console_sink(agent_bus, verbose=False)
 
     store = SqliteStore(workspace_path() / "history.db")
-    SessionRouter(agent_bus, message_bus, storage=store).install()
+    router = SessionRouter(agent_bus, message_bus, storage=store)
+    router.install()
 
-    await message_bus.observe(MESSAGE_INBOUND, "batch", {"text": user_input})
+    result = await router.run_once(user_input)
+    print(result)

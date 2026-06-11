@@ -1,7 +1,7 @@
 """传输层客户端：连接服务端，双向中继事件。
 
-读方向：反序列化 JSON-lines → 注入本地 EventBus。
-写方向：订阅本地 EventBus → 序列化 → 发送给服务端。
+读方向：反序列化 JSON-lines → 注入本地 events bus。
+写方向：订阅本地 events bus → 序列化 → 发送给服务端。
 """
 
 from __future__ import annotations
@@ -9,13 +9,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from ..bus.message import TRANSPORT_RAW, MessageBus
+from ..bus.eventbus import EventBus
+from ..bus.messagebus import TRANSPORT_RAW
 
 log = logging.getLogger("mmsg.transport")
 
 
 async def connect_to_server(
-    bus: MessageBus,
+    events: EventBus,
     host: str = "127.0.0.1",
     port: int = 9090,
 ) -> asyncio.Task:
@@ -33,10 +34,10 @@ async def connect_to_server(
         except Exception:
             pass
 
-    bus.subscribe("*", relay_to_server)
+    events.subscribe("*", relay_to_server)
 
     async def run() -> None:
-        """读取服务端推送的 JSON 行，反序列化后注入本地总线。"""
+        """读取服务端推送的 JSON 行，反序列化后注入本地 events bus。"""
         while True:
             line = await reader.readline()
             if not line:
@@ -45,6 +46,6 @@ async def connect_to_server(
             data = line.decode().strip()
             if not data:
                 continue
-            await bus.observe(TRANSPORT_RAW, "transport", {"data": data})
+            await events.observe(TRANSPORT_RAW, "transport", {"data": data})
 
     return asyncio.create_task(run())

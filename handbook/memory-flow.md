@@ -25,10 +25,11 @@ workspace/
 ## 调用链
 
 ```
-router._on_inbound:
-  agent = AgentLoop(memory=self._memory, ...)
-  result = await agent.run(text)
-  → 出站
+SessionRouter._consume_loop / run_once:
+  → _process(source, text)
+    → agent = AgentLoop(memory=self._memory, ...)
+    → result = await agent.run(text)
+  → publish_outbound(source, result) 或 return result
 
 AgentLoop.run:
   memory.start_turn()

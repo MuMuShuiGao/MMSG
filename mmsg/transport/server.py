@@ -1,4 +1,4 @@
-"""传输层服务端：监听 TCP 端口，message_bus 事件推给客户端，客户端发来的事件注入 message_bus。"""
+"""传输层服务端：监听 TCP 端口，可观测事件推给客户端，客户端消息注入 message_bus 队列。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 from ..bus.eventbus import Event
-from ..bus.message import MessageBus
+from ..bus.messagebus import MessageBus, MESSAGE_INBOUND
 
 log = logging.getLogger("mmsg.transport")
 
@@ -33,7 +33,7 @@ async def run_tcp_server(
             except Exception:
                 pass
 
-        unsub = message_bus.subscribe("*", relay_to_client)
+        unsub = message_bus.events.subscribe("*", relay_to_client)
         try:
             while True:
                 line = await reader.readline()
@@ -47,7 +47,11 @@ async def run_tcp_server(
                 except Exception:
                     log.debug("无法解析客户端数据: %r", data)
                     continue
-                await message_bus.observe(evt.type, evt.source, evt.payload)
+
+                if evt.type == MESSAGE_INBOUND:
+                    await message_bus.publish_inbound(evt.source, evt.payload)
+                else:
+                    await message_bus.events.observe(evt.type, evt.source, evt.payload)
         except (ConnectionResetError, asyncio.IncompleteReadError):
             pass
         finally:
