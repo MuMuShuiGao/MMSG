@@ -25,13 +25,7 @@ workspace/
 ## 调用链
 
 ```
-SessionRouter._consume_loop / run_once:
-  → _process(source, text)
-    → agent = AgentLoop(memory=self._memory, ...)
-    → result = await agent.run(text)
-  → publish_outbound(source, result) 或 return result
-
-AgentLoop.run:
+AgentLoop.serve() 或 app._batch → agent.run(text):
   memory.start_turn()
   memory.write(user)
   【思考循环：memory.write(assistant/tool) ... memory.recall()】
@@ -45,4 +39,4 @@ AgentLoop.run:
 
 ## 替换引擎
 
-在 `engines/` 下新建子包（如 `graph/`），实现 `Memory` 协议 + 暴露 `create(config)`，然后在 `engines/__init__.py` 的 `ENGINE_REGISTRY` 加一行，改 `config.toml` 的 `backend` 即可。上游（router/loop）零改动。
+在 `engines/` 下新建子包（如 `graph/`），实现 `Memory` 协议 + 暴露 `create(config)`，然后在 `engines/__init__.py` 的 `ENGINE_REGISTRY` 加一行，改 `config.toml` 的 `backend` 即可。上游（app/agent）零改动。

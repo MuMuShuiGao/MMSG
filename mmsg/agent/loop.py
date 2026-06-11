@@ -1,14 +1,17 @@
-"""AgentLoop: 感知 → 思考 (LLM) → 行动 (工具) → 观察 → 重复。
+"""AgentLoop: 消费消息队列 → 感知 → 思考 (LLM) → 行动 (工具) → 观察 → 重复。
 
-每次状态转换都通过事件总线发布事件，不留隐式侧通道。
+长驻 serve() 循环从 MessageBus 取用户输入，每次输入执行一个 turn。
+每次状态转换都通过 agent_bus 发布事件，不留隐式侧通道。
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from ..bus.agent import AgentEvent, AgentBus
+from ..bus.messagebus import MessageBus, SESSION_RESET
 from ..llm.base import ChatMessage, LLMProvider
 from ..memory import Memory, MemoryRecord
 from ..tools.base import Tool
@@ -21,27 +24,62 @@ log = logging.getLogger("mmsg.agent")
 class AgentLoop:
     def __init__(
         self,
-        bus: AgentBus,
+        agent_bus: AgentBus,
         llm: LLMProvider,
         memory: Memory,
         tools: dict[str, Tool] | None = None,
+        message_bus: MessageBus | None = None,
         system_prompt: str = "你是一个有用的助手。需要时请使用工具。",
         max_steps: int = 8,
         name: str = "agent",
         storage: SqliteStore | None = None,
-        session_id: str | None = None,
     ) -> None:
-        self.bus = bus
+        self.bus = agent_bus
         self.llm = llm
         self.memory = memory
         self.tools = tools or {}
+        self._message_bus = message_bus
         self.system_prompt = system_prompt
         self.max_steps = max_steps
         self.name = name
         self.storage = storage
-        self.session_id = session_id
+        self._session_id: str | None = None
+
+    # ── 消息队列消费 ──────────────────────────────
+
+    async def serve(self) -> None:
+        """长驻循环：从 message_bus 消费入站消息 → run() → 发布出站。"""
+        if self._message_bus is None:
+            raise RuntimeError("serve() 需要 message_bus")
+        self._message_bus.events.subscribe(SESSION_RESET, self._on_session_reset)
+        while True:
+            item = await self._message_bus.consume_inbound()
+            payload = item.payload or {}
+            text = payload.get("text", "")
+            if not text:
+                continue
+            result = await self.run(text)
+
+            out_payload: dict = {"text": result}
+            if payload.get("openid"):
+                out_payload["openid"] = payload["openid"]
+            await self._message_bus.publish_outbound(item.source, out_payload)
+
+    # ── 会话管理 ──────────────────────────────────
+
+    def _ensure_session(self) -> str:
+        if self._session_id is None:
+            self._session_id = uuid.uuid4().hex[:12]
+            if self.storage:
+                self.storage.create_session(self._session_id)
+            log.info("新会话: %s", self._session_id)
+        return self._session_id
+
+    async def _on_session_reset(self, evt: Any) -> None:
+        self._session_id = None
 
     async def run(self, user_input: str) -> str:
+        self._ensure_session()
         turn_records: list[TurnRecord] = []
         await self.memory.start_turn()
 
@@ -165,12 +203,12 @@ class AgentLoop:
         return final_text
 
     async def _persist_turn(self, records: list[TurnRecord]) -> None:
-        if not self.storage or not self.session_id:
+        if not self.storage or not self._session_id:
             return
         for rec in records:
             self.storage.save_message(
                 Message(
-                    session_id=self.session_id,
+                    session_id=self._session_id,
                     role=rec.role,
                     content=rec.content,
                     meta=rec.meta,

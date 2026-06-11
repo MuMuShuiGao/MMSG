@@ -14,7 +14,6 @@ mmsg/
 ├── core/          # 插件注册表、日志
 ├── llm/           # LLM 抽象层（ChatMessage 协议 + OpenAI provider）
 ├── memory/        # 分层记忆（工作记忆 + 后端工厂）
-├── router/        # SessionRouter — 桥接外部消息 ↔ agent 内部
 ├── observability/ # 可观测性（控制台 sink）
 ├── tools/         # 工具基类 + echo / now 工具
 ├── transport/     # TCP 客户端/服务端通信
@@ -27,16 +26,15 @@ mmsg/
 |------|------|
 | `bus/eventbus.py` | EventBus 类 — intercept() 顺序改写管道 + observe() 并行旁路通知，通配符匹配 |
 | `bus/agent.py` | Agent 内部事件常量（AgentEvent）— Interceptor(BeforeStep/AfterReasoning) + Observer(BeforeTurn/BeforeToolCall/AfterToolCall/AfterStep/AfterTurn) |
-| `bus/message.py` | 外部消息总线 + 事件常量（message.*, session.*, transport.* 等） |
+| `bus/messagebus.py` | 外部消息总线 + 事件常量（message.*, session.*, transport.* 等） |
 | `core/plugin.py` | Registry — LLM/Tool 插件注册与按名创建 |
-| `agent/loop.py` | AgentLoop — 感知→思考→行动→观察 主循环，流式 LLM + 工具调用 |
+| `agent/loop.py` | AgentLoop — serve() 消费消息队列 + 感知→思考→行动→观察 主循环，流式 LLM + 工具调用 |
 | `llm/base.py` | LLM 协议 — ChatMessage, LLMProvider, StreamChunk |
 | `llm/openai_provider.py` | OpenAI API 接入（chat + chat_stream） |
 | `memory/base.py` | Memory 协议 + LayeredMemory 组合层 |
 | `memory/working.py` | WorkingMemory — 定长环形缓冲区短期记忆 |
 | `memory/factory.py` | create_memory() — 根据 MEMORY_BACKEND 环境变量选择后端 |
 | `memory/backends/builtin.py` | 内置后端：WorkingMemory + 未来 episodic/semantic 层 |
-| `router/router.py` | SessionRouter — 监听 message.inbound 创建 AgentLoop，桥接 Observer 事件到 message_bus |
 | `channel/qqbot.py` | QQBot 私聊通道 — WS 收消息 → message_bus → REST 发消息 |
 | `tools/base.py` | Tool 抽象基类 — JSON Schema 参数 + async run |
 | `tools/echo.py` | EchoTool + NowTool 演示工具 |

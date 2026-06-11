@@ -1,14 +1,16 @@
 """Agent 核心启动逻辑：_serve / _batch 由 __main__.py 统一调度。"""
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from .bus.agent import AgentBus
-from .bus.messagebus import MessageBus, SESSION_RESET
+from .agent import AgentLoop
+from .bus.agent import AgentBus, AgentEvent
+from .bus.messagebus import MessageBus
 from .config import qqbot as _qqbot, workspace_path
 from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
-from .router import SessionRouter
+from .memory import create_memory
 from .observability import attach_console_sink
 from .storage import SqliteStore
 from .tools import EchoTool, NowTool
@@ -16,12 +18,34 @@ from .transport import run_tcp_server
 
 log = logging.getLogger(__name__)
 
+_OBSERVABLE_TYPES = {
+    AgentEvent.BeforeToolCall,
+    AgentEvent.AfterToolCall,
+    AgentEvent.AfterStep,
+    AgentEvent.AfterTurn,
+}
+
 
 def _register_plugins() -> None:
     """全局一次性注册插件。只在启动时调用一次。"""
     tool_registry.register("echo")(EchoTool)
     tool_registry.register("now")(NowTool)
     llm_registry.register("openai")(OpenAIProvider)
+
+
+def _build_agent(agent_bus: AgentBus, message_bus: MessageBus) -> AgentLoop:
+    store = SqliteStore(workspace_path() / "history.db")
+    llm = llm_registry.create("openai")
+    tools = {name: tool_registry.create(name) for name in tool_registry.names()}
+    memory = create_memory()
+    return AgentLoop(
+        agent_bus=agent_bus,
+        llm=llm,
+        memory=memory,
+        tools=tools,
+        message_bus=message_bus,
+        storage=store,
+    )
 
 
 async def _start_channels(message_bus: MessageBus) -> None:
@@ -46,11 +70,16 @@ async def _serve(host: str, port: int) -> None:
     message_bus = MessageBus()
     attach_console_sink(agent_bus, verbose=False)
 
-    store = SqliteStore(workspace_path() / "history.db")
-    SessionRouter(agent_bus, message_bus, storage=store).install()
+    agent = _build_agent(agent_bus, message_bus)
+
+    async def _bridge_observable(evt) -> None:
+        if evt.type in _OBSERVABLE_TYPES:
+            await message_bus.events.observe(evt.type, evt.source, evt.payload)
+
+    agent_bus.subscribe("*", _bridge_observable)
+    asyncio.create_task(agent.serve())
 
     await _start_channels(message_bus)
-
     await run_tcp_server(message_bus, host=host, port=port)
 
 
@@ -63,9 +92,6 @@ async def _batch(user_input: str) -> None:
     message_bus = MessageBus()
     attach_console_sink(agent_bus, verbose=False)
 
-    store = SqliteStore(workspace_path() / "history.db")
-    router = SessionRouter(agent_bus, message_bus, storage=store)
-    router.install()
-
-    result = await router.run_once(user_input)
+    agent = _build_agent(agent_bus, message_bus)
+    result = await agent.run(user_input)
     print(result)

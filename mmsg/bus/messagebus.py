@@ -1,7 +1,7 @@
 """外部消息总线：inbound/outbound 走生产者-消费者队列，可观测事件走内嵌 EventBus。
 
-channel/TUI  →  publish_inbound()  →  [_inbound queue]  →  consume_inbound()  →  SessionRouter
-SessionRouter → publish_outbound()  →  [_outbound queue] →  subscribe_outbound() →  channel 发消息
+channel/TUI  →  publish_inbound()  →  [_inbound queue]  →  consume_inbound()  →  AgentLoop.serve()
+AgentLoop    →  publish_outbound()  →  [_outbound queue] →  subscribe_outbound() →  channel 发消息
 """
 
 from __future__ import annotations
