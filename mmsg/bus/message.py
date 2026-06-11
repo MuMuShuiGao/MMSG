@@ -6,7 +6,6 @@ MESSAGE_INBOUND = "message.inbound"
 MESSAGE_OUTBOUND = "message.outbound"
 
 SESSION_RESET = "session.reset"
-USER_CANCEL = "user.cancel"
 
 TRANSPORT_RAW = "transport.raw"
 

@@ -1,4 +1,4 @@
-from .recorder import ChatRecorder
+from .models import TurnRecord
 from .sqlite import SqliteStore
 
-__all__ = ["ChatRecorder", "SqliteStore"]
+__all__ = ["SqliteStore", "TurnRecord"]

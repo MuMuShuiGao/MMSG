@@ -25,8 +25,8 @@ mmsg/
 
 | 模块 | 作用 |
 |------|------|
-| `bus/eventbus.py` | EventBus 类 — 发布/订阅基础设施，通配符匹配 |
-| `bus/agent.py` | Agent 内部总线 + 事件常量（llm.*, tool.*, loop.*, agent.final 等） |
+| `bus/eventbus.py` | EventBus 类 — intercept() 顺序改写管道 + observe() 并行旁路通知，通配符匹配 |
+| `bus/agent.py` | Agent 内部事件常量（AgentEvent）— Interceptor(BeforeStep/AfterReasoning) + Observer(BeforeTurn/BeforeToolCall/AfterToolCall/AfterStep/AfterTurn) |
 | `bus/message.py` | 外部消息总线 + 事件常量（message.*, session.*, transport.* 等） |
 | `core/plugin.py` | Registry — LLM/Tool 插件注册与按名创建 |
 | `agent/loop.py` | AgentLoop — 感知→思考→行动→观察 主循环，流式 LLM + 工具调用 |
@@ -36,13 +36,13 @@ mmsg/
 | `memory/working.py` | WorkingMemory — 定长环形缓冲区短期记忆 |
 | `memory/factory.py` | create_memory() — 根据 MEMORY_BACKEND 环境变量选择后端 |
 | `memory/backends/builtin.py` | 内置后端：WorkingMemory + 未来 episodic/semantic 层 |
-| `router/router.py` | SessionRouter — 监听 message.inbound 创建 AgentLoop，桥接 observable 事件到 message_bus |
+| `router/router.py` | SessionRouter — 监听 message.inbound 创建 AgentLoop，桥接 Observer 事件到 message_bus |
 | `channel/qqbot.py` | QQBot 私聊通道 — WS 收消息 → message_bus → REST 发消息 |
 | `tools/base.py` | Tool 抽象基类 — JSON Schema 参数 + async run |
 | `tools/echo.py` | EchoTool + NowTool 演示工具 |
 | `transport/server.py` | TCP JSON-lines 服务端 |
 | `transport/client.py` | TCP JSON-lines 客户端 |
-| `observability/console_sink.py` | 彩色控制台事件输出，按事件类型着色 |
+| `observability/console_sink.py` | 彩色控制台事件输出，按 Interceptor/Observer 事件类型着色 |
 | `ui/textual/` | 富终端 TUI：聊天记录、输入栏、状态栏、工具块 |
 | `app.py` | 启动逻辑 — _serve / _batch，注册插件、启动 channel |
 

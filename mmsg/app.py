@@ -10,7 +10,7 @@ from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
 from .router import SessionRouter
 from .observability import attach_console_sink
-from .storage import ChatRecorder, SqliteStore
+from .storage import SqliteStore
 from .tools import EchoTool, NowTool
 from .transport import run_tcp_server
 
@@ -46,10 +46,8 @@ async def _serve(host: str, port: int) -> None:
     message_bus = MessageBus()
     attach_console_sink(agent_bus, verbose=False)
 
-    SessionRouter(agent_bus, message_bus).install()
-
     store = SqliteStore(workspace_path() / "history.db")
-    ChatRecorder(store, agent_bus, message_bus).install()
+    SessionRouter(agent_bus, message_bus, storage=store).install()
 
     async def on_session_reset(evt) -> None:
         await message_bus.observe(SESSION_RESET, "server", {})
@@ -70,9 +68,7 @@ async def _batch(user_input: str) -> None:
     message_bus = MessageBus()
     attach_console_sink(agent_bus, verbose=False)
 
-    SessionRouter(agent_bus, message_bus).install()
-
     store = SqliteStore(workspace_path() / "history.db")
-    ChatRecorder(store, agent_bus, message_bus).install()
+    SessionRouter(agent_bus, message_bus, storage=store).install()
 
     await message_bus.observe(MESSAGE_INBOUND, "batch", {"text": user_input})

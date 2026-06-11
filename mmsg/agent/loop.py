@@ -12,6 +12,8 @@ from ..bus.agent import AgentEvent, AgentBus
 from ..llm.base import ChatMessage, LLMProvider
 from ..memory.base import Memory, MemoryRecord
 from ..tools.base import Tool
+from ..storage.models import Message, TurnRecord
+from ..storage.sqlite import SqliteStore
 
 log = logging.getLogger("mmsg.agent")
 
@@ -26,6 +28,8 @@ class AgentLoop:
         system_prompt: str = "你是一个有用的助手。需要时请使用工具。",
         max_steps: int = 8,
         name: str = "agent",
+        storage: SqliteStore | None = None,
+        session_id: str | None = None,
     ) -> None:
         self.bus = bus
         self.llm = llm
@@ -34,9 +38,15 @@ class AgentLoop:
         self.system_prompt = system_prompt
         self.max_steps = max_steps
         self.name = name
+        self.storage = storage
+        self.session_id = session_id
 
     async def run(self, user_input: str) -> str:
-        await self.memory.write(MemoryRecord(role="user", content=user_input))
+        turn_records: list[TurnRecord] = []
+
+        user_record = MemoryRecord(role="user", content=user_input)
+        await self.memory.write(user_record)
+        turn_records.append(TurnRecord(role="user", content=user_input))
 
         tool_schemas = [t.schema() for t in self.tools.values()] or None
         final_text = ""
@@ -89,8 +99,14 @@ class AgentLoop:
                 if tc.model_dump() in collected_tool_calls_raw
             ]
 
-            await self.memory.write(
-                MemoryRecord(
+            assistant_record = MemoryRecord(
+                role="assistant",
+                content=collected_content or "",
+                meta={"tool_calls": [tc.model_dump() for tc in collected_tool_calls]},
+            )
+            await self.memory.write(assistant_record)
+            turn_records.append(
+                TurnRecord(
                     role="assistant",
                     content=collected_content or "",
                     meta={"tool_calls": [tc.model_dump() for tc in collected_tool_calls]},
@@ -119,8 +135,14 @@ class AgentLoop:
                     except Exception as ex:
                         result = f"错误: {ex!r}"
 
-                await self.memory.write(
-                    MemoryRecord(
+                tool_record = MemoryRecord(
+                    role="tool",
+                    content=str(result),
+                    meta={"tool_call_id": tc.id, "name": tc.name},
+                )
+                await self.memory.write(tool_record)
+                turn_records.append(
+                    TurnRecord(
                         role="tool",
                         content=str(result),
                         meta={"tool_call_id": tc.id, "name": tc.name},
@@ -136,8 +158,22 @@ class AgentLoop:
                 "step": step, "final": False,
             })
 
+        await self._persist_turn(turn_records)
         await self.bus.observe(AgentEvent.AfterTurn, self.name, {"final": final_text})
         return final_text
+
+    async def _persist_turn(self, records: list[TurnRecord]) -> None:
+        if not self.storage or not self.session_id:
+            return
+        for rec in records:
+            self.storage.save_message(
+                Message(
+                    session_id=self.session_id,
+                    role=rec.role,
+                    content=rec.content,
+                    meta=rec.meta,
+                )
+            )
 
     async def _assemble_messages(self) -> list[ChatMessage]:
         recalled = await self.memory.recall(query="", k=64)
