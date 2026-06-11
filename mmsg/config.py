@@ -19,7 +19,7 @@ def llm(key: str, default=None):
 
 
 def memory_backend() -> str:
-    return _cfg.get("memory", {}).get("backend", "builtin")
+    return _cfg.get("memory", {}).get("backend", "default")
 
 
 def qqbot(key: str, default=""):

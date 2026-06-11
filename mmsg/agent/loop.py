@@ -10,7 +10,7 @@ from typing import Any
 
 from ..bus.agent import AgentEvent, AgentBus
 from ..llm.base import ChatMessage, LLMProvider
-from ..memory.base import Memory, MemoryRecord
+from ..memory import Memory, MemoryRecord
 from ..tools.base import Tool
 from ..storage.models import Message, TurnRecord
 from ..storage.sqlite import SqliteStore
@@ -43,6 +43,7 @@ class AgentLoop:
 
     async def run(self, user_input: str) -> str:
         turn_records: list[TurnRecord] = []
+        await self.memory.start_turn()
 
         user_record = MemoryRecord(role="user", content=user_input)
         await self.memory.write(user_record)
@@ -159,6 +160,7 @@ class AgentLoop:
             })
 
         await self._persist_turn(turn_records)
+        await self.memory.end_turn(user_input, final_text[:200])
         await self.bus.observe(AgentEvent.AfterTurn, self.name, {"final": final_text})
         return final_text
 

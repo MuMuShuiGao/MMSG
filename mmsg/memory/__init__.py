@@ -1,5 +1,5 @@
-from .base import LayeredMemory, Memory, MemoryRecord
+from .protocol import Memory
+from .record import MemoryRecord
 from .factory import create_memory
-from .working import WorkingMemory
 
-__all__ = ["LayeredMemory", "Memory", "MemoryRecord", "WorkingMemory", "create_memory"]
+__all__ = ["Memory", "MemoryRecord", "create_memory"]
