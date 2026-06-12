@@ -32,13 +32,9 @@ class MarkdownMemoryLayer(ABC):
         ...
 
     @abstractmethod
-    def write_recent_context(self, content: str) -> None:
-        """写入近期摘要。"""
-        ...
-
     async def consolidate(self, messages: list[MemoryRecord]) -> None:
-        """摘要压缩调度 — 可选实现。"""
-        pass
+        """摘要压缩调度。"""
+        ...
 
 
 # ── 向量引擎层 ───────────────────────────────────────────────

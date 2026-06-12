@@ -125,7 +125,7 @@
 
 ### 3.6 `mmsg/agent/` — Agent 主体
 - `loop.py` (`AgentLoop`): 消息消费循环 + 会话管理 + 持久化。**不懂多轮工具调用**，全权委托给 `Reasoner`。
-- `reason/engine.py` (`Reasoner`): 完整 ReAct 循环。从 memory 召回上下文 → 多步 LLM 调用 + 工具执行 → 滑动窗口 + 周期性摘要压缩。`max_window=40` / `llm_input_turns=10` / `summarize_every=5` 写死在 `__init__`。
+- `reason/engine.py` (`Reasoner`): 完整 ReAct 循环。从 memory 召回上下文 → 多步 LLM 调用 + 工具执行 → 滑动窗口 + 异步摘要压缩（`_schedule_consolidate` 用 `asyncio.create_task` 后台跑，不阻塞主流程；同一时刻最多一个压缩任务）。`max_window=40` / `llm_input_turns=10` / `summarize_every=5` 写死在 `__init__`。
 
 ### 3.7 `mmsg/llm/` — LLM 抽象
 - `base.py`: `LLMProvider` 抽象类，OpenAI 风格的 `ChatMessage` / `ToolCall` / `StreamChunk`。
@@ -136,9 +136,9 @@
 - `echo.py` / `now.py`: 两个示例工具。
 
 ### 3.9 `mmsg/memory/` — 记忆
-- `protocol.py`: `Memory` 抽象（`write` / `recall` / `summarize` / `start_turn` / `end_turn`）。
+- `protocol.py`: `MemoryRuntime` 组合层（`write` / `recall` / `summarize`）。`MarkdownMemoryLayer` 抽象定义 `get_memory_context` / `read_recent_context` / `write_memory` / `consolidate`。
 - `factory.py`: `create_memory()` 根据 `config.toml` 的 `memory.backend` 选择引擎。
-- `engines/default/`: 当前唯一实现，双文件持久化（`current_context.md` 近期摘要 + `memory.md` 长期知识）。摘要由 `Reasoner` 触发，LLM 生成 5 字段 JSON。
+- `engines/default/`: 当前唯一实现，双文件持久化（`current_context.md` 近期摘要 + `memory.md` 长期知识）。`consolidate()` 为 `@abstractmethod`，LLM 生成 5 字段 JSON 后覆盖写入摘要。
 
 ### 3.10 `mmsg/storage/` — 持久化
 `SqliteStore`：`session` + `message` 两张表，`history.db` 在 `workspace_path()` 下。

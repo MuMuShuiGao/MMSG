@@ -6,6 +6,7 @@ AgentLoop 只负责消息总线消费和组件编排，不问"怎么多轮调工
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
@@ -305,7 +306,7 @@ class Reasoner:
                 MemoryRecord(role=m.role, content=m.content or "", meta={})
                 for m in seg
             ]
-            await self.memory.summarize(seg_records)
+            self._schedule_consolidate(seg_records)
             start += self._summarize_every
         self._last_summarized_turn = start
 
@@ -314,6 +315,15 @@ class Reasoner:
 
         feed_from = self._find_cut_index(cached, self.llm_input_turns)
         return system_msgs + cached[feed_from:]
+
+    def _schedule_consolidate(self, seg_records: list[MemoryRecord]) -> None:
+        asyncio.create_task(self._do_consolidate(seg_records))
+
+    async def _do_consolidate(self, seg_records: list[MemoryRecord]) -> None:
+        try:
+            await self.memory.summarize(seg_records)
+        except Exception:
+            log.exception("后台摘要压缩失败")
 
     @staticmethod
     def _find_cut_index(messages: list[ChatMessage], limit_turns: int) -> int:

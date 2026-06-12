@@ -38,9 +38,6 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
     def write_memory(self, content: str) -> None:
         self.knowledge.write(content)
 
-    def write_recent_context(self, content: str) -> None:
-        self.context.write(content)
-
     async def consolidate(self, messages: list[MemoryRecord]) -> None:
         """将一段对话记录压缩为摘要，写入 current_context.md 近期摘要。"""
         try:
@@ -85,13 +82,7 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
 
             ts = datetime.now(timezone.utc).strftime("%m-%d %H:%M")
             entry = f"### [{ts}]\n{summary}\n"
-            existing = self.context.read() or ""
-            if "# 近期摘要" in existing:
-                idx = existing.index("# 近期摘要") + len("# 近期摘要")
-                new_content = "# 近期摘要\n" + entry + existing[idx:].lstrip("\n")
-            else:
-                new_content = "# 近期摘要\n" + entry
-            self.context.write(new_content)
+            self.context.write(f"# 近期摘要\n{entry}")
         except Exception:
             log.exception("摘要生成失败")
 
