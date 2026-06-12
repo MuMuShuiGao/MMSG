@@ -15,6 +15,9 @@ class Memory(ABC):
     @abstractmethod
     async def recall(self, query: str, k: int = 8) -> list[MemoryRecord]: ...
 
+    async def summarize(self, messages: list[MemoryRecord]) -> None:
+        pass
+
     async def start_turn(self) -> None:
         pass
 

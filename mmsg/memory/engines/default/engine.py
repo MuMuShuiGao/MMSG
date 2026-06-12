@@ -1,10 +1,12 @@
-"""default 记忆引擎 — 双文件持久化 + 内建摘要策略。
-
+"""default 记忆引擎 — 双文件持久化。
 实现 Memory 协议，内部组合 ContextWindow + KnowledgeBase。
-end_turn 时自动累加轮次，每 10 轮触发 LLM 摘要压缩。
+摘要压缩由推理引擎的滑动窗口触发，此处只负责摘要生成与写入。
 """
 from __future__ import annotations
 
+import json
+import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,8 @@ from ...protocol import Memory
 from ...record import MemoryRecord
 from .current_context import ContextWindow
 from .memory import KnowledgeBase
+
+log = logging.getLogger("mmsg.memory.default")
 
 
 class DefaultEngine(Memory):
@@ -21,15 +25,9 @@ class DefaultEngine(Memory):
         memory_dir.mkdir(parents=True, exist_ok=True)
         self.context = ContextWindow(memory_dir / "current_context.md", max_turns=max_turns)
         self.knowledge = KnowledgeBase(memory_dir / "memory.md")
-        self._summarize_every = summarize_every
-        self._turn_count = 0
-        self._pending: list[str] = []
-
-    async def start_turn(self) -> None:
-        await self.context.start_turn()
 
     async def write(self, record: MemoryRecord) -> None:
-        await self.context.write(record.role, record.content)
+        pass
 
     async def recall(self, query: str, k: int = 8) -> list[MemoryRecord]:
         records: list[MemoryRecord] = []
@@ -41,26 +39,19 @@ class DefaultEngine(Memory):
             records.append(MemoryRecord(role="system", content=content))
         return records
 
-    async def end_turn(self, user_input: str = "", assistant_output: str = "") -> None:
-        self._turn_count += 1
-        self._pending.append(f"用户：{user_input}\n助手：{assistant_output[:200]}")
+    async def summarize(self, messages: list[MemoryRecord]) -> None:
+        """将一段对话记录压缩为摘要，写入 current_context.md 近期摘要。"""
+        try:
+            from ....llm.base import ChatMessage
+            from ....core import llm_registry
+            llm = llm_registry.create("openai")
+        except Exception:
+            log.exception("无法创建 LLM 实例用于摘要")
+            return
 
-        summary = ""
-        if self._turn_count % self._summarize_every == 0:
-            buffer = "\n---\n".join(self._pending)
-            summary = await self._summarize(buffer)
-            self._pending.clear()
-
-        await self.context.end_turn(summary)
-
-    async def _summarize(self, turns_text: str) -> str:
-        import json
-        import logging
-
-        from ....llm.base import ChatMessage
-        from ....core import llm_registry
-
-        log = logging.getLogger("mmsg.memory.default")
+        turns_text = "\n---\n".join(
+            f"{m.role}: {m.content or ''}" for m in messages if m.role in ("user", "assistant")
+        )
         prompt = (
             "根据以下多轮对话，返回一个 JSON 对象，包含 5 个字段（每字段不超过40字，无则填\"无\"）：\n"
             '{\n'
@@ -74,7 +65,6 @@ class DefaultEngine(Memory):
         )
         msgs = [ChatMessage(role="user", content=prompt)]
         try:
-            llm = llm_registry.create("openai")
             resp = await llm.chat(msgs)
             raw = resp.message.content.strip() or ""
             if raw.startswith("```"):
@@ -89,10 +79,19 @@ class DefaultEngine(Memory):
                 f"- 最近避免事项：{data.get('避免事项', '无')}",
                 f"- 会话前置背景：{data.get('前置背景', '无')}",
             ]
-            return "\n".join(lines)
+            summary = "\n".join(lines)
+
+            ts = datetime.now(timezone.utc).strftime("%m-%d %H:%M")
+            entry = f"### [{ts}]\n{summary}\n"
+            existing = self.context.read() or ""
+            if "# 近期摘要" in existing:
+                idx = existing.index("# 近期摘要") + len("# 近期摘要")
+                new_content = "# 近期摘要\n" + entry + existing[idx:].lstrip("\n")
+            else:
+                new_content = "# 近期摘要\n" + entry
+            self.context.write(new_content)
         except Exception:
             log.exception("摘要生成失败")
-            return ""
 
 
 def create(config: dict[str, Any] | None = None) -> Memory:

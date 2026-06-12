@@ -65,6 +65,11 @@ class Reasoner:
         self.system_prompt = system_prompt
         self.max_steps = max_steps
         self.name = name
+        self.max_window = 40
+        self.max_window_turns = self.max_window // 2
+        self.llm_input_turns = 10
+        self._summarize_every = 5
+        self._last_summarized_turn = 0
 
     async def think(self) -> ThinkingResult:
         """执行完整 ReAct 循环。
@@ -243,4 +248,56 @@ class Reasoner:
                 )
             else:
                 msgs.append(ChatMessage(role=rec.role, content=rec.content))
+
+        msgs = await self._apply_sliding_window(msgs)
         return msgs
+
+    async def _apply_sliding_window(
+        self, msgs: list[ChatMessage]
+    ) -> list[ChatMessage]:
+        """滑动窗口：最多缓存 40 次（20 轮），只喂最近 20 次（10 轮）给 LLM。
+
+        从最早开始每 5 轮（10 次）做摘要压缩，只压未压过的段。
+        """
+        system_msgs = [m for m in msgs if m.role == "system"]
+        rest = [m for m in msgs if m.role != "system"]
+
+        if not rest:
+            return system_msgs
+
+        # 对未摘要的5轮段依次压缩
+        user_indices = [i for i, m in enumerate(rest) if m.role == "user"]
+        total_turns = len(user_indices)
+        start = self._last_summarized_turn
+        while start + self._summarize_every <= total_turns:
+            seg_users = user_indices[start : start + self._summarize_every]
+            seg = rest[seg_users[0] : seg_users[-1] + 1]
+            # 截掉末尾未完成的 tool call 链，确保末尾是最终 assistant 回复
+            while seg and (seg[-1].role == "tool" or (seg[-1].role == "assistant" and seg[-1].tool_calls)):
+                seg.pop()
+            if not seg:
+                break
+            seg_records = [
+                MemoryRecord(role=m.role, content=m.content or "", meta={})
+                for m in seg
+            ]
+            await self.memory.summarize(seg_records)
+            start += self._summarize_every
+        self._last_summarized_turn = start
+
+        cache_from = self._find_cut_index(rest, self.max_window_turns)
+        cached = rest[cache_from:]
+
+        feed_from = self._find_cut_index(cached, self.llm_input_turns)
+        return system_msgs + cached[feed_from:]
+
+    @staticmethod
+    def _find_cut_index(messages: list[ChatMessage], limit_turns: int) -> int:
+        """倒序数 user 消息，数到 limit_turns 时返回起始下标。"""
+        count = 0
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].role == "user":
+                count += 1
+                if count >= limit_turns:
+                    return i
+        return 0
