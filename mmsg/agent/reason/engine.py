@@ -72,6 +72,7 @@ class Reasoner:
         self.llm_input_turns = 10
         self._summarize_every = 5
         self._last_summarized_turn = 0
+        self._history: list[ChatMessage] = []
 
     async def think(self) -> AsyncGenerator[ThinkingResult, None]:
         """执行完整 ReAct 循环，每个 step 完成后 yield 一个 ThinkingResult。
@@ -100,6 +101,13 @@ class Reasoner:
                     role="assistant",
                     content=result.content or "",
                     meta=usage_meta,
+                )
+            )
+            self._history.append(
+                ChatMessage(
+                    role="assistant",
+                    content=result.content or None,
+                    tool_calls=result.tool_calls,
                 )
             )
             records.append(
@@ -147,6 +155,14 @@ class Reasoner:
                         role="tool",
                         content=str(tool_result),
                         meta={"tool_call_id": tc.id, "name": tc.name},
+                    )
+                )
+                self._history.append(
+                    ChatMessage(
+                        role="tool",
+                        content=str(tool_result),
+                        tool_call_id=tc.id,
+                        name=tc.name,
                     )
                 )
                 records.append(
@@ -243,15 +259,11 @@ class Reasoner:
         )
 
     async def _assemble_messages(self) -> list[ChatMessage]:
-        """从 memory 组装 ChatMessage 列表。
-
-        markdown 层全量注入 + engine 语义召回（如有）。
-        """
+        """从 markdown 层注入长期记忆 + 近期摘要，加上推理引擎自己维护的对话历史。"""
         msgs: list[ChatMessage] = [
             ChatMessage(role="system", content=self.system_prompt)
         ]
 
-        # markdown 层：全量注入
         memory_ctx = self.memory.markdown.get_memory_context()
         if memory_ctx:
             msgs.append(ChatMessage(role="system", content=f"# 长期记忆\n\n{memory_ctx}"))
@@ -259,28 +271,7 @@ class Reasoner:
         if recent_ctx:
             msgs.append(ChatMessage(role="system", content=recent_ctx))
 
-        # engine 层：语义召回（暂无 engine 时返回空）
-        recalled = await self.memory.recall(query="", k=64)
-        for rec in recalled:
-            if rec.role == "tool":
-                msgs.append(
-                    ChatMessage(
-                        role="tool",
-                        content=rec.content,
-                        tool_call_id=rec.meta.get("tool_call_id"),
-                        name=rec.meta.get("name"),
-                    )
-                )
-            elif rec.role == "assistant":
-                tool_calls_raw = rec.meta.get("tool_calls") or []
-                tcs = [ToolCall(**tc) for tc in tool_calls_raw]
-                msgs.append(
-                    ChatMessage(
-                        role="assistant", content=rec.content or None, tool_calls=tcs
-                    )
-                )
-            else:
-                msgs.append(ChatMessage(role=rec.role, content=rec.content))
+        msgs.extend(self._history)
 
         msgs = await self._apply_sliding_window(msgs)
         return msgs

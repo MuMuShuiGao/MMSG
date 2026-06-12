@@ -13,7 +13,7 @@ from typing import Any
 
 from ..bus.agent import AgentEvent, AgentBus
 from ..bus.messagebus import MessageBus, SESSION_RESET
-from ..llm.base import LLMProvider
+from ..llm.base import ChatMessage, LLMProvider
 from ..memory import Memory, MemoryRecord
 from ..tools.base import Tool
 from ..storage.models import Message, TurnRecord
@@ -59,6 +59,7 @@ class AgentLoop:
         """长驻循环：从 message_bus 消费入站消息 → run() → 每步 publish 出站。"""
         if self._message_bus is None:
             raise RuntimeError("serve() 需要 message_bus")
+        self._restore_latest_session()
         self._message_bus.events.subscribe(SESSION_RESET, self._on_session_reset)
         while True:
             item = await self._message_bus.consume_inbound()
@@ -77,6 +78,35 @@ class AgentLoop:
 
     # ── 会话管理 ──────────────────────────────────
 
+    def _restore_latest_session(self) -> None:
+        """进程启动时：恢复最新 session 及其消息历史到 reasoner._history。"""
+        if not self.storage:
+            return
+        sessions = self.storage.list_sessions(limit=1)
+        if not sessions:
+            return
+        sid = sessions[0]["id"]
+        self._session_id = sid
+        rows = self.storage.get_messages(sid, limit=200)
+        for row in rows:
+            meta = row.get("meta") or {}
+            if isinstance(meta, str):
+                import json as _json
+                try:
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            msg = ChatMessage(role=row["role"], content=row.get("content") or "")
+            if row["role"] == "tool":
+                msg.tool_call_id = meta.get("tool_call_id")
+                msg.name = meta.get("name")
+            elif row["role"] == "assistant":
+                tcs_raw = meta.get("tool_calls") or []
+                from ..llm.base import ToolCall
+                msg.tool_calls = [ToolCall(**tc) for tc in tcs_raw]
+            self.reasoner._history.append(msg)
+        log.info("恢复会话 %s，%d 条历史", sid, len(rows))
+
     def _ensure_session(self) -> str:
         if self._session_id is None:
             self._session_id = uuid.uuid4().hex[:12]
@@ -87,6 +117,8 @@ class AgentLoop:
 
     async def _on_session_reset(self, evt: Any) -> None:
         self._session_id = None
+        self.reasoner._history.clear()
+        self.reasoner._last_summarized_turn = 0
 
     # ── Turn 调度 ─────────────────────────────────
 
@@ -99,6 +131,7 @@ class AgentLoop:
 
         user_record = MemoryRecord(role="user", content=user_input)
         await self.memory.write(user_record)
+        self.reasoner._history.append(ChatMessage(role="user", content=user_input))
         user_tr = TurnRecord(role="user", content=user_input)
 
         await self.bus.observe(AgentEvent.BeforeTurn, self.name, {})
