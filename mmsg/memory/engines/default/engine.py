@@ -23,6 +23,7 @@ class DefaultEngine(Memory):
 
     def __init__(self, memory_dir: Path, max_turns: int = 5, summarize_every: int = 10) -> None:
         memory_dir.mkdir(parents=True, exist_ok=True)
+        self.memory_dir = memory_dir
         self.context = ContextWindow(memory_dir / "current_context.md", max_turns=max_turns)
         self.knowledge = KnowledgeBase(memory_dir / "memory.md")
 

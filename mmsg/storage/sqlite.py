@@ -96,5 +96,51 @@ class SqliteStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def delete_session(self, session_id: str) -> None:
+        self._conn.execute("DELETE FROM message WHERE session_id = ?", (session_id,))
+        self._conn.execute("DELETE FROM session WHERE id = ?", (session_id,))
+        self._conn.commit()
+
+    def update_message(self, msg_id: int, content: str) -> None:
+        self._conn.execute(
+            "UPDATE message SET content = ? WHERE id = ?",
+            (content, msg_id),
+        )
+        self._conn.commit()
+
+    def get_message(self, msg_id: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM message WHERE id = ?", (msg_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def usage_summary(self) -> dict[str, Any]:
+        rows = self._conn.execute("SELECT session_id, meta FROM message WHERE role = 'assistant'").fetchall()
+        total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        by_session: dict[str, dict[str, Any]] = {}
+
+        for row in rows:
+            try:
+                meta = json.loads(row["meta"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            usage = meta.get("usage") or {}
+            if not isinstance(usage, dict):
+                continue
+
+            session_id = row["session_id"]
+            session = by_session.setdefault(
+                session_id,
+                {"session_id": session_id, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            )
+            for key in total:
+                value = usage.get(key) or 0
+                if isinstance(value, int | float):
+                    total[key] += int(value)
+                    session[key] += int(value)
+
+        sessions = sorted(by_session.values(), key=lambda item: item["total_tokens"], reverse=True)
+        return {"total": total, "sessions": sessions}
+
     def close(self) -> None:
         self._conn.close()

@@ -92,18 +92,21 @@ class Reasoner:
             total_usage = result.usage or total_usage
 
             tc_dumps = [tc.model_dump() for tc in result.tool_calls]
+            usage_meta = {"tool_calls": tc_dumps}
+            if result.usage:
+                usage_meta["usage"] = result.usage
             await self.memory.write(
                 MemoryRecord(
                     role="assistant",
                     content=result.content or "",
-                    meta={"tool_calls": tc_dumps},
+                    meta=usage_meta,
                 )
             )
             records.append(
                 TurnRecord(
                     role="assistant",
                     content=result.content or "",
-                    meta={"tool_calls": tc_dumps},
+                    meta=usage_meta,
                 )
             )
 

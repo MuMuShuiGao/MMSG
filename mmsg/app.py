@@ -80,6 +80,12 @@ async def _serve(host: str, port: int) -> None:
     asyncio.create_task(agent.serve())
 
     await _start_channels(message_bus)
+
+    from .dashboard import start_dashboard
+    dashboard_task = asyncio.create_task(
+        start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=2236)
+    )
+
     await run_tcp_server(message_bus, host=host, port=port)
 
 
