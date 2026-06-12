@@ -100,7 +100,7 @@ async def start_dashboard(
     store: SqliteStore | None,
     memory: Any,
     host: str = "127.0.0.1",
-    port: int = 2236,
+    port: int = 9876,
 ) -> None:
     try:
         import uvicorn
