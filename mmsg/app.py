@@ -12,6 +12,7 @@ from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
 from .memory import create_memory
 from .observability import attach_console_sink
+from .prompt.segments import SystemPromptBuilder
 from .storage import SqliteStore
 from .tools import EchoTool, NowTool
 from .transport import run_tcp_server
@@ -45,6 +46,7 @@ def _build_agent(agent_bus: AgentBus, message_bus: MessageBus) -> AgentLoop:
         tools=tools,
         message_bus=message_bus,
         storage=store,
+        system_builder=SystemPromptBuilder(workspace=workspace_path()),
     )
 
 

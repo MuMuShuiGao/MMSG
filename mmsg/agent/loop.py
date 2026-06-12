@@ -18,6 +18,7 @@ from ..memory import Memory, MemoryRecord
 from ..tools.base import Tool
 from ..storage.models import Message, TurnRecord
 from ..storage.sqlite import SqliteStore
+from ..prompt.segments import SystemPromptBuilder
 from .reason import Reasoner
 from .reason.engine import ThinkingResult
 
@@ -32,7 +33,7 @@ class AgentLoop:
         memory: Memory,
         tools: dict[str, Tool] | None = None,
         message_bus: MessageBus | None = None,
-        system_prompt: str = "你是一个有用的助手。需要时请使用工具。",
+        system_builder: SystemPromptBuilder | None = None,
         max_steps: int = 8,
         name: str = "agent",
         storage: SqliteStore | None = None,
@@ -49,7 +50,7 @@ class AgentLoop:
             bus=agent_bus,
             memory=memory,
             tools=tools or {},
-            system_prompt=system_prompt,
+            system_builder=system_builder,
             max_steps=max_steps,
             name=name,
         )
@@ -124,7 +125,7 @@ class AgentLoop:
     async def _on_session_reset(self, evt: Any) -> None:
         self._sessions.clear()
         self.reasoner._history.clear()
-        self.reasoner._last_summarized_turn = 0
+        self.reasoner.context.reset_summary_state()
 
     # ── Turn 调度 ─────────────────────────────────
 

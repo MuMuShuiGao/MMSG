@@ -78,7 +78,7 @@ class OpenAIProvider(LLMProvider):
     @staticmethod
     def _dump_msg(m: ChatMessage) -> dict[str, Any]:
         d: dict[str, Any] = {"role": m.role}
-        if m.content is not None:
+        if m.content:
             d["content"] = m.content
         if m.name:
             d["name"] = m.name
@@ -93,6 +93,9 @@ class OpenAIProvider(LLMProvider):
                 }
                 for tc in m.tool_calls
             ]
+        # assistant 消息必须包含 content 或 tool_calls 之一
+        if m.role == "assistant" and "content" not in d and "tool_calls" not in d:
+            d["content"] = ""
         return d
 
     async def chat_stream(

@@ -1,14 +1,14 @@
-"""推理引擎：完整的 ReAct 循环 — LLM 调用 + 流式收集 + 工具执行 + 窗口管理。
+"""推理引擎：完整的 ReAct 循环 — LLM 调用 + 流式收集 + 工具执行。
 
-think() = 从 memory 读上下文 → 多步推理 & 工具调用 → 写回 memory & 返回记录。
+think() = prompt 拼装 → 多步推理 & 工具调用 → 写回 memory & 返回记录。
+上下文组装和滑动窗口委托给 LLMContext。
 AgentLoop 只负责消息总线消费和组件编排，不问"怎么多轮调工具"。
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -18,6 +18,8 @@ from ...llm.base import ChatMessage, LLMProvider, ToolCall
 from ...memory import Memory, MemoryRecord
 from ...storage.models import TurnRecord
 from ...tools.base import Tool
+from ...prompt.segments import SystemPromptBuilder
+from ..context import LLMContext
 
 log = logging.getLogger("mmsg.agent.reason")
 
@@ -57,23 +59,27 @@ class Reasoner:
         bus: AgentBus,
         memory: Memory,
         tools: dict[str, Tool],
-        system_prompt: str,
+        system_builder: SystemPromptBuilder | None = None,
         max_steps: int = 8,
         name: str = "agent",
+        max_window: int = 40,
+        llm_input_turns: int = 10,
+        summarize_every: int = 5,
     ) -> None:
         self.llm = llm
         self.bus = bus
         self.memory = memory
         self.tools = tools
-        self.system_prompt = system_prompt
         self.max_steps = max_steps
         self.name = name
-        self.max_window = 40
-        self.max_window_turns = self.max_window // 2
-        self.llm_input_turns = 10
-        self._summarize_every = 5
-        self._last_summarized_turn = 0
         self._history: list[ChatMessage] = []
+        self.context = LLMContext(
+            memory=memory,
+            system_builder=system_builder,
+            max_window=max_window,
+            llm_input_turns=llm_input_turns,
+            summarize_every=summarize_every,
+        )
 
     async def think(self) -> AsyncGenerator[ThinkingResult, None]:
         """执行完整 ReAct 循环，每个 step 完成后 yield 一个 ThinkingResult。
@@ -88,7 +94,7 @@ class Reasoner:
         step = 0
 
         for step in range(1, self.max_steps + 1):
-            msgs = await self._assemble_messages()
+            msgs = await self.context.build(self._history)
 
             result = await self._reason_step(msgs, tool_schemas, step)
             total_usage = result.usage or total_usage
@@ -107,7 +113,7 @@ class Reasoner:
             self._history.append(
                 ChatMessage(
                     role="assistant",
-                    content=result.content or None,
+                    content=result.content or "",
                     tool_calls=result.tool_calls,
                 )
             )
@@ -258,80 +264,3 @@ class Reasoner:
             usage=usage,
             step=step,
         )
-
-    async def _assemble_messages(self) -> list[ChatMessage]:
-        """从 markdown 层注入长期记忆 + 近期摘要，加上推理引擎自己维护的对话历史。"""
-        msgs: list[ChatMessage] = [
-            ChatMessage(role="system", content=self.system_prompt)
-        ]
-
-        memory_ctx = self.memory.markdown.get_memory_context()
-        if memory_ctx:
-            msgs.append(ChatMessage(role="system", content=f"# 长期记忆\n\n{memory_ctx}"))
-        recent_ctx = self.memory.markdown.read_recent_context()
-        if recent_ctx:
-            msgs.append(ChatMessage(role="system", content=recent_ctx))
-
-        msgs.extend(self._history)
-
-        msgs = await self._apply_sliding_window(msgs)
-        return msgs
-
-    async def _apply_sliding_window(
-        self, msgs: list[ChatMessage]
-    ) -> list[ChatMessage]:
-        """滑动窗口：最多缓存 40 次（20 轮），只喂最近 20 次（10 轮）给 LLM。
-
-        从最早开始每 5 轮（10 次）做摘要压缩，只压未压过的段。
-        """
-        system_msgs = [m for m in msgs if m.role == "system"]
-        rest = [m for m in msgs if m.role != "system"]
-
-        if not rest:
-            return system_msgs
-
-        # 对未摘要的5轮段依次压缩
-        user_indices = [i for i, m in enumerate(rest) if m.role == "user"]
-        total_turns = len(user_indices)
-        start = self._last_summarized_turn
-        while start + self._summarize_every <= total_turns:
-            seg_users = user_indices[start : start + self._summarize_every]
-            seg = rest[seg_users[0] : seg_users[-1] + 1]
-            # 截掉末尾未完成的 tool call 链，确保末尾是最终 assistant 回复
-            while seg and (seg[-1].role == "tool" or (seg[-1].role == "assistant" and seg[-1].tool_calls)):
-                seg.pop()
-            if not seg:
-                break
-            seg_records = [
-                MemoryRecord(role=m.role, content=m.content or "", meta={})
-                for m in seg
-            ]
-            self._schedule_consolidate(seg_records)
-            start += self._summarize_every
-        self._last_summarized_turn = start
-
-        cache_from = self._find_cut_index(rest, self.max_window_turns)
-        cached = rest[cache_from:]
-
-        feed_from = self._find_cut_index(cached, self.llm_input_turns)
-        return system_msgs + cached[feed_from:]
-
-    def _schedule_consolidate(self, seg_records: list[MemoryRecord]) -> None:
-        asyncio.create_task(self._do_consolidate(seg_records))
-
-    async def _do_consolidate(self, seg_records: list[MemoryRecord]) -> None:
-        try:
-            await self.memory.summarize(seg_records)
-        except Exception:
-            log.exception("后台摘要压缩失败")
-
-    @staticmethod
-    def _find_cut_index(messages: list[ChatMessage], limit_turns: int) -> int:
-        """倒序数 user 消息，数到 limit_turns 时返回起始下标。"""
-        count = 0
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].role == "user":
-                count += 1
-                if count >= limit_turns:
-                    return i
-        return 0
