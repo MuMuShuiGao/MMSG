@@ -243,11 +243,24 @@ class Reasoner:
         )
 
     async def _assemble_messages(self) -> list[ChatMessage]:
-        """从 memory 召回上下文，组装 ChatMessage 列表。"""
-        recalled = await self.memory.recall(query="", k=64)
+        """从 memory 组装 ChatMessage 列表。
+
+        markdown 层全量注入 + engine 语义召回（如有）。
+        """
         msgs: list[ChatMessage] = [
             ChatMessage(role="system", content=self.system_prompt)
         ]
+
+        # markdown 层：全量注入
+        memory_ctx = self.memory.markdown.get_memory_context()
+        if memory_ctx:
+            msgs.append(ChatMessage(role="system", content=f"# 长期记忆\n\n{memory_ctx}"))
+        recent_ctx = self.memory.markdown.read_recent_context()
+        if recent_ctx:
+            msgs.append(ChatMessage(role="system", content=recent_ctx))
+
+        # engine 层：语义召回（暂无 engine 时返回空）
+        recalled = await self.memory.recall(query="", k=64)
         for rec in recalled:
             if rec.role == "tool":
                 msgs.append(

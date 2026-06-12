@@ -10,7 +10,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..memory.engines.default.engine import DefaultEngine
+from ..memory.engines.default.engine import DefaultMarkdownLayer
+from ..memory.protocol import MemoryRuntime
 from ..storage.sqlite import SqliteStore
 
 log = logging.getLogger("mmsg.dashboard")
@@ -18,7 +19,7 @@ log = logging.getLogger("mmsg.dashboard")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-def _build_app(store: SqliteStore, memory: DefaultEngine) -> FastAPI:
+def _build_app(store: SqliteStore, memory: DefaultMarkdownLayer) -> FastAPI:
     app = FastAPI(title="MMSG Dashboard", version="0.1.0")
 
     # ── Static files (JS/CSS) ──────────────────────
@@ -107,15 +108,20 @@ async def start_dashboard(
         log.warning("uvicorn not installed, dashboard disabled. pip install uvicorn fastapi")
         return
 
-    if not isinstance(memory, DefaultEngine):
-        log.warning("Dashboard requires default memory engine, got %s. Memory tab disabled.", type(memory).__name__)
+    if not isinstance(memory, MemoryRuntime):
+        log.warning("Dashboard requires MemoryRuntime, got %s. Memory tab disabled.", type(memory).__name__)
+        return
+
+    markdown = memory.markdown
+    if not isinstance(markdown, DefaultMarkdownLayer):
+        log.warning("Dashboard requires DefaultMarkdownLayer, got %s. Memory tab disabled.", type(markdown).__name__)
         return
 
     if store is None:
         log.warning("Dashboard requires SqliteStore. Sessions tab disabled.")
         return
 
-    app = _build_app(store, memory)
+    app = _build_app(store, markdown)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     await server.serve()

@@ -16,7 +16,3 @@ class KnowledgeBase:
 
     def write(self, content: str) -> None:
         self._path.write_text(content, encoding="utf-8")
-
-    def append(self, fact: str) -> None:
-        with open(self._path, "a", encoding="utf-8") as f:
-            f.write(f"- {fact}\n")

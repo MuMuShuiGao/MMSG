@@ -96,7 +96,6 @@ class AgentLoop:
         done=False：中间 step；done=True：最终结果，此时落库并触发 AfterTurn。
         """
         self._ensure_session()
-        await self.memory.start_turn()
 
         user_record = MemoryRecord(role="user", content=user_input)
         await self.memory.write(user_record)
@@ -107,7 +106,6 @@ class AgentLoop:
         async for chunk in self.reasoner.think():
             if chunk.done:
                 await self._persist_turn([user_tr] + chunk.records)
-                await self.memory.end_turn(user_input, chunk.content[:200])
                 await self.bus.observe(
                     AgentEvent.AfterTurn, self.name, {"final": chunk.content}
                 )

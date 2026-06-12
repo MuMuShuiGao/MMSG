@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class ContextWindow:
-    def __init__(self, file_path: Path, max_turns: int = 5) -> None:
+    def __init__(self, file_path: Path) -> None:
         self._path = file_path
         if not self._path.exists():
             self._path.write_text("# 近期摘要\n", encoding="utf-8")

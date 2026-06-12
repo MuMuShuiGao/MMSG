@@ -1,6 +1,9 @@
-"""default 记忆引擎 — 双文件持久化。
-实现 Memory 协议，内部组合 ContextWindow + KnowledgeBase。
-摘要压缩由推理引擎的滑动窗口触发，此处只负责摘要生成与写入。
+"""default 记忆 — Markdown 文件 I/O 层实现。
+
+实现 MarkdownMemoryLayer 协议：
+- memory.md → 长期记忆
+- current_context.md → 近期摘要
+- consolidate() → LLM 压缩对话写入近期摘要
 """
 from __future__ import annotations
 
@@ -10,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...protocol import Memory
+from ...protocol import MarkdownMemoryLayer, MemoryRuntime
 from ...record import MemoryRecord
 from .current_context import ContextWindow
 from .memory import KnowledgeBase
@@ -18,29 +21,27 @@ from .memory import KnowledgeBase
 log = logging.getLogger("mmsg.memory.default")
 
 
-class DefaultEngine(Memory):
-    layer = "default"
+class DefaultMarkdownLayer(MarkdownMemoryLayer):
 
-    def __init__(self, memory_dir: Path, max_turns: int = 5, summarize_every: int = 10) -> None:
+    def __init__(self, memory_dir: Path) -> None:
         memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_dir = memory_dir
-        self.context = ContextWindow(memory_dir / "current_context.md", max_turns=max_turns)
+        self.context = ContextWindow(memory_dir / "current_context.md")
         self.knowledge = KnowledgeBase(memory_dir / "memory.md")
 
-    async def write(self, record: MemoryRecord) -> None:
-        pass
+    def get_memory_context(self) -> str | None:
+        return self.knowledge.read()
 
-    async def recall(self, query: str, k: int = 8) -> list[MemoryRecord]:
-        records: list[MemoryRecord] = []
-        content = self.knowledge.read()
-        if content:
-            records.append(MemoryRecord(role="system", content=f"# 长期记忆\n\n{content}"))
-        content = self.context.read()
-        if content:
-            records.append(MemoryRecord(role="system", content=content))
-        return records
+    def read_recent_context(self) -> str | None:
+        return self.context.read()
 
-    async def summarize(self, messages: list[MemoryRecord]) -> None:
+    def write_memory(self, content: str) -> None:
+        self.knowledge.write(content)
+
+    def write_recent_context(self, content: str) -> None:
+        self.context.write(content)
+
+    async def consolidate(self, messages: list[MemoryRecord]) -> None:
         """将一段对话记录压缩为摘要，写入 current_context.md 近期摘要。"""
         try:
             from ....llm.base import ChatMessage
@@ -95,11 +96,10 @@ class DefaultEngine(Memory):
             log.exception("摘要生成失败")
 
 
-def create(config: dict[str, Any] | None = None) -> Memory:
+def create(config: dict[str, Any] | None = None) -> MemoryRuntime:
     from ....config import workspace_path
 
     config = config or {}
     memory_dir = workspace_path() / Path(config.get("memory_dir", "memory"))
-    max_turns = config.get("max_turns", 5)
-    summarize_every = config.get("summarize_every", 10)
-    return DefaultEngine(memory_dir, max_turns=max_turns, summarize_every=summarize_every)
+    markdown_layer = DefaultMarkdownLayer(memory_dir)
+    return MemoryRuntime(markdown=markdown_layer, engine=None)
