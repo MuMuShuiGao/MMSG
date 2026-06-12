@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from ..bus.agent import AgentEvent, AgentBus
@@ -18,6 +19,7 @@ from ..tools.base import Tool
 from ..storage.models import Message, TurnRecord
 from ..storage.sqlite import SqliteStore
 from .reason import Reasoner
+from .reason.engine import ThinkingResult
 
 log = logging.getLogger("mmsg.agent")
 
@@ -54,7 +56,7 @@ class AgentLoop:
     # ── 消息队列消费 ──────────────────────────────
 
     async def serve(self) -> None:
-        """长驻循环：从 message_bus 消费入站消息 → run() → 发布出站。"""
+        """长驻循环：从 message_bus 消费入站消息 → run() → 每步 publish 出站。"""
         if self._message_bus is None:
             raise RuntimeError("serve() 需要 message_bus")
         self._message_bus.events.subscribe(SESSION_RESET, self._on_session_reset)
@@ -64,12 +66,14 @@ class AgentLoop:
             text = payload.get("text", "")
             if not text:
                 continue
-            result = await self.run(text)
 
-            out_payload: dict = {"text": result}
+            out_base: dict = {}
             if payload.get("openid"):
-                out_payload["openid"] = payload["openid"]
-            await self._message_bus.publish_outbound(item.source, out_payload)
+                out_base["openid"] = payload["openid"]
+
+            async for chunk in self.run(text):
+                out_payload = {**out_base, "text": chunk.content, "done": chunk.done}
+                await self._message_bus.publish_outbound(item.source, out_payload)
 
     # ── 会话管理 ──────────────────────────────────
 
@@ -86,10 +90,10 @@ class AgentLoop:
 
     # ── Turn 调度 ─────────────────────────────────
 
-    async def run(self, user_input: str) -> str:
-        """处理一次用户输入：写 memory → 委派 Reasoner → 持久化。
+    async def run(self, user_input: str) -> AsyncGenerator[ThinkingResult, None]:
+        """处理一次用户输入，逐步 yield ThinkingResult。
 
-        不懂工具调用细节，只把 Reasoner 返回的记录落库。
+        done=False：中间 step；done=True：最终结果，此时落库并触发 AfterTurn。
         """
         self._ensure_session()
         await self.memory.start_turn()
@@ -100,14 +104,14 @@ class AgentLoop:
 
         await self.bus.observe(AgentEvent.BeforeTurn, self.name, {})
 
-        result = await self.reasoner.think()
-
-        await self._persist_turn([user_tr] + result.records)
-        await self.memory.end_turn(user_input, result.content[:200])
-        await self.bus.observe(
-            AgentEvent.AfterTurn, self.name, {"final": result.content}
-        )
-        return result.content
+        async for chunk in self.reasoner.think():
+            if chunk.done:
+                await self._persist_turn([user_tr] + chunk.records)
+                await self.memory.end_turn(user_input, chunk.content[:200])
+                await self.bus.observe(
+                    AgentEvent.AfterTurn, self.name, {"final": chunk.content}
+                )
+            yield chunk
 
     # ── 持久化 ────────────────────────────────────
 

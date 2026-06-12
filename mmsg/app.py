@@ -93,5 +93,8 @@ async def _batch(user_input: str) -> None:
     attach_console_sink(agent_bus, verbose=False)
 
     agent = _build_agent(agent_bus, message_bus)
-    result = await agent.run(user_input)
-    print(result)
+    final = ""
+    async for chunk in agent.run(user_input):
+        if chunk.done:
+            final = chunk.content
+    print(final)

@@ -117,6 +117,8 @@ class QQBotChannel:
             return
         if not item.source.startswith("qqbot:"):
             return
+        if not item.payload.get("done", True):
+            return
         token = await self._access_token()
         await self._api("POST", f"/v2/users/{openid}/messages", {
             "markdown": {"content": text},

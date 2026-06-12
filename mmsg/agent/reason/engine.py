@@ -7,6 +7,7 @@ AgentLoop 只负责消息总线消费和组件编排，不问"怎么多轮调工
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -30,11 +31,12 @@ class ReasoningResult(BaseModel):
 
 
 class ThinkingResult(BaseModel):
-    """完整 ReAct 循环结果。"""
+    """完整 ReAct 循环结果。done=False 表示中间 step，done=True 表示最终结果。"""
     content: str = ""
     records: list[TurnRecord] = Field(default_factory=list)
     steps: int = 0
     usage: dict[str, Any] = Field(default_factory=dict)
+    done: bool = False
 
 
 class Reasoner:
@@ -71,11 +73,11 @@ class Reasoner:
         self._summarize_every = 5
         self._last_summarized_turn = 0
 
-    async def think(self) -> ThinkingResult:
-        """执行完整 ReAct 循环。
+    async def think(self) -> AsyncGenerator[ThinkingResult, None]:
+        """执行完整 ReAct 循环，每个 step 完成后 yield 一个 ThinkingResult。
 
-        从 memory 读上下文，多步推理 + 工具调用，中间结果写回 memory，
-        返回最终文本和 TurnRecord 列表供上层持久化。
+        done=False：中间 step；done=True：最终结果，包含完整 records。
+        从 memory 读上下文，多步推理 + 工具调用，中间结果写回 memory。
         """
         records: list[TurnRecord] = []
         tool_schemas = [t.schema() for t in self.tools.values()] or None
@@ -112,7 +114,14 @@ class Reasoner:
                     self.name,
                     {"step": step, "final": True, "text": final_text},
                 )
-                break
+                yield ThinkingResult(
+                    content=final_text,
+                    records=list(records),
+                    steps=step,
+                    usage=total_usage,
+                    done=True,
+                )
+                return
 
             for tc in result.tool_calls:
                 await self.bus.observe(
@@ -153,9 +162,17 @@ class Reasoner:
             await self.bus.observe(
                 AgentEvent.AfterStep, self.name, {"step": step, "final": False}
             )
+            yield ThinkingResult(
+                content=result.content or "",
+                records=list(records),
+                steps=step,
+                usage=total_usage,
+                done=False,
+            )
 
-        return ThinkingResult(
-            content=final_text, records=records, steps=step, usage=total_usage
+        # max_steps 耗尽
+        yield ThinkingResult(
+            content=final_text, records=records, steps=step, usage=total_usage, done=True
         )
 
     # ── 内部 ──────────────────────────────────────
