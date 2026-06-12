@@ -42,7 +42,8 @@ class AgentLoop:
         self._message_bus = message_bus
         self.name = name
         self.storage = storage
-        self._session_id: str | None = None
+        self._sessions: dict[str, str] = {}
+        self._current_source: str = ""
         self.reasoner = Reasoner(
             llm=llm,
             bus=agent_bus,
@@ -59,7 +60,6 @@ class AgentLoop:
         """长驻循环：从 message_bus 消费入站消息 → run() → 每步 publish 出站。"""
         if self._message_bus is None:
             raise RuntimeError("serve() 需要 message_bus")
-        self._restore_latest_session()
         self._message_bus.events.subscribe(SESSION_RESET, self._on_session_reset)
         while True:
             item = await self._message_bus.consume_inbound()
@@ -72,21 +72,20 @@ class AgentLoop:
             if payload.get("openid"):
                 out_base["openid"] = payload["openid"]
 
-            async for chunk in self.run(text):
+            async for chunk in self.run(text, source=item.source):
                 out_payload = {**out_base, "text": chunk.content, "done": chunk.done}
                 await self._message_bus.publish_outbound(item.source, out_payload)
 
     # ── 会话管理 ──────────────────────────────────
 
-    def _restore_latest_session(self) -> None:
-        """进程启动时：恢复最新 session 及其消息历史到 reasoner._history。"""
+    def _restore_latest_session(self, source: str) -> str | None:
+        """按 source 查询最新 session，恢复消息历史到 reasoner._history。返回 session_id 或 None。"""
         if not self.storage:
-            return
-        sessions = self.storage.list_sessions(limit=1)
-        if not sessions:
-            return
-        sid = sessions[0]["id"]
-        self._session_id = sid
+            return None
+        s = self.storage.get_session_by_source(source)
+        if not s:
+            return None
+        sid = s["id"]
         rows = self.storage.get_messages(sid, limit=200)
         for row in rows:
             meta = row.get("meta") or {}
@@ -105,29 +104,37 @@ class AgentLoop:
                 from ..llm.base import ToolCall
                 msg.tool_calls = [ToolCall(**tc) for tc in tcs_raw]
             self.reasoner._history.append(msg)
-        log.info("恢复会话 %s，%d 条历史", sid, len(rows))
+        log.info("恢复会话 %s (source=%s)，%d 条历史", sid, source, len(rows))
+        return sid
 
-    def _ensure_session(self) -> str:
-        if self._session_id is None:
-            self._session_id = uuid.uuid4().hex[:12]
-            if self.storage:
-                self.storage.create_session(self._session_id)
-            log.info("新会话: %s", self._session_id)
-        return self._session_id
+    def _ensure_session(self, source: str) -> str:
+        if self._sessions.get(source):
+            return self._sessions[source]
+        sid = self._restore_latest_session(source)
+        if sid:
+            self._sessions[source] = sid
+            return sid
+        sid = uuid.uuid4().hex[:12]
+        self._sessions[source] = sid
+        if self.storage:
+            self.storage.create_session(sid, source=source)
+        log.info("新会话: %s (source=%s)", sid, source)
+        return sid
 
     async def _on_session_reset(self, evt: Any) -> None:
-        self._session_id = None
+        self._sessions.clear()
         self.reasoner._history.clear()
         self.reasoner._last_summarized_turn = 0
 
     # ── Turn 调度 ─────────────────────────────────
 
-    async def run(self, user_input: str) -> AsyncGenerator[ThinkingResult, None]:
+    async def run(self, user_input: str, source: str = "") -> AsyncGenerator[ThinkingResult, None]:
         """处理一次用户输入，逐步 yield ThinkingResult。
 
         done=False：中间 step；done=True：最终结果，此时落库并触发 AfterTurn。
         """
-        self._ensure_session()
+        self._current_source = source
+        self._ensure_session(source)
 
         user_record = MemoryRecord(role="user", content=user_input)
         await self.memory.write(user_record)
@@ -147,12 +154,12 @@ class AgentLoop:
     # ── 持久化 ────────────────────────────────────
 
     async def _persist_turn(self, records: list[TurnRecord]) -> None:
-        if not self.storage or not self._session_id:
+        if not self.storage or not self._sessions.get(self._current_source):
             return
         for rec in records:
             self.storage.save_message(
                 Message(
-                    session_id=self._session_id,
+                    session_id=self._sessions[self._current_source],
                     role=rec.role,
                     content=rec.content,
                     meta=rec.meta,

@@ -23,14 +23,19 @@ class SqliteStore:
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS session (
                 id         TEXT PRIMARY KEY,
+                source     TEXT NOT NULL DEFAULT '',
                 title      TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
 
+            CREATE INDEX IF NOT EXISTS idx_session_source
+                ON session(source, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS message (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL REFERENCES session(id),
+                seq        INTEGER NOT NULL DEFAULT 0,
                 role       TEXT NOT NULL,
                 content    TEXT NOT NULL DEFAULT '',
                 meta       TEXT NOT NULL DEFAULT '{}',
@@ -38,20 +43,20 @@ class SqliteStore:
             );
 
             CREATE INDEX IF NOT EXISTS idx_msg_session
-                ON message(session_id, id);
+                ON message(session_id, seq);
         """)
         self._conn.commit()
 
     # ---- session ----
 
-    def create_session(self, session_id: str, title: str = "") -> Session:
+    def create_session(self, session_id: str, source: str = "", title: str = "") -> Session:
         now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
-            "INSERT INTO session (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (session_id, title, now, now),
+            "INSERT INTO session (id, source, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (session_id, source, title, now, now),
         )
         self._conn.commit()
-        return Session(id=session_id, title=title, created_at=now, updated_at=now)
+        return Session(id=session_id, source=source, title=title, created_at=now, updated_at=now)
 
     def touch_session(self, session_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -65,35 +70,56 @@ class SqliteStore:
 
     def save_message(self, msg: Message) -> int:
         now = msg.created_at or datetime.now(timezone.utc).isoformat()
+        seq = msg.seq or self._next_seq(msg.session_id)
         cur = self._conn.execute(
-            "INSERT INTO message (session_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?)",
-            (msg.session_id, msg.role, msg.content, json.dumps(msg.meta, ensure_ascii=False), now),
+            "INSERT INTO message (session_id, seq, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (msg.session_id, seq, msg.role, msg.content, json.dumps(msg.meta, ensure_ascii=False), now),
         )
         self._conn.commit()
         self.touch_session(msg.session_id)
         return cur.lastrowid
+
+    def _next_seq(self, session_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM message WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return row[0] + 1
 
     def get_messages(
         self, session_id: str, limit: int = 100, before_id: int | None = None
     ) -> list[dict[str, Any]]:
         if before_id is not None:
             rows = self._conn.execute(
-                "SELECT * FROM message WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+                "SELECT * FROM message WHERE session_id = ? AND id < ? ORDER BY seq DESC LIMIT ?",
                 (session_id, before_id, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM message WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                "SELECT * FROM message WHERE session_id = ? ORDER BY seq DESC LIMIT ?",
                 (session_id, limit),
             ).fetchall()
         rows.reverse()
         return [dict(r) for r in rows]
 
-    def list_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            "SELECT * FROM session ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+    def get_session_by_source(self, source: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM session WHERE source = ? ORDER BY updated_at DESC LIMIT 1",
+            (source,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_sessions(self, limit: int = 20, source: str | None = None) -> list[dict[str, Any]]:
+        if source is not None:
+            rows = self._conn.execute(
+                "SELECT * FROM session WHERE source = ? ORDER BY updated_at DESC LIMIT ?",
+                (source, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM session ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def delete_session(self, session_id: str) -> None:
