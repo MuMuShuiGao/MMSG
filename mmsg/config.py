@@ -33,6 +33,11 @@ backend = "default"
 # QQ 机器人配置（可选，留空则不启用）
 app_id = ""
 secret = ""
+
+[feishu]
+# 飞书机器人配置（可选，留空则不启用）
+app_id = ""
+app_secret = ""
 """
 
 
@@ -77,3 +82,7 @@ def memory_backend() -> str:
 
 def qqbot(key: str, default=""):
     return _load().get("qqbot", {}).get(key, default)
+
+
+def feishu(key: str, default=""):
+    return _load().get("feishu", {}).get(key, default)

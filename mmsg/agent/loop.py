@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from ..bus.agent import AgentEvent, AgentBus
@@ -69,9 +69,7 @@ class AgentLoop:
             if not text:
                 continue
 
-            out_base: dict = {}
-            if payload.get("openid"):
-                out_base["openid"] = payload["openid"]
+            out_base = {k: v for k, v in payload.items() if k != "text"}
 
             async for chunk in self.run(text, source=item.source):
                 out_payload = {**out_base, "text": chunk.content, "done": chunk.done}

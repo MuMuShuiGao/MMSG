@@ -8,7 +8,7 @@ import sys
 from .agent import AgentLoop
 from .bus.agent import AgentBus, AgentEvent
 from .bus.messagebus import MessageBus
-from .config import config_exists, init_config, llm as _llm_cfg, qqbot as _qqbot, workspace_path
+from .config import config_exists, feishu as _feishu, init_config, llm as _llm_cfg, qqbot as _qqbot, workspace_path
 from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
 from .memory import create_memory
@@ -36,20 +36,22 @@ def _register_plugins() -> None:
 
 
 def _ensure_deps() -> None:
-    """一次性检查并安装所有可选依赖。"""
+    """检查可选依赖是否已安装（不实际加载模块）。"""
+    from importlib.util import find_spec
+
     missing: list[str] = []
     for mod, pkg in [
         ("fastapi", "fastapi"),
         ("uvicorn", "uvicorn"),
         ("websockets", "websockets"),
+        ("lark_oapi", "lark-oapi"),
     ]:
-        try:
-            __import__(mod)
-        except ImportError:
+        if find_spec(mod) is None:
             missing.append(pkg)
     if not missing:
         return
     import subprocess
+
     log.info("正在安装缺失依赖: %s ...", ", ".join(missing))
     subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
 
@@ -72,11 +74,20 @@ def _build_agent(agent_bus: AgentBus, message_bus: MessageBus) -> AgentLoop:
 
 async def _start_channels(message_bus: MessageBus) -> None:
     """根据配置按需启动 channel。"""
+    # QQBot
     app_id = _qqbot("app_id")
     secret = _qqbot("secret")
     if app_id and secret:
         from .channel.qqbot import QQBotChannel
         ch = QQBotChannel(app_id=app_id, client_secret=secret, bus=message_bus)
+        await ch.start()
+
+    # Feishu
+    fs_app_id = _feishu("app_id")
+    fs_secret = _feishu("app_secret")
+    if fs_app_id and fs_secret:
+        from .channel.feishu import FeishuChannel
+        ch = FeishuChannel(app_id=fs_app_id, app_secret=fs_secret, bus=message_bus)
         await ch.start()
 
 
