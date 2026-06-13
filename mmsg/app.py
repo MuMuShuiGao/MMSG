@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 
 from .agent import AgentLoop
 from .bus.agent import AgentBus, AgentEvent
 from .bus.messagebus import MessageBus
-from .config import qqbot as _qqbot, workspace_path
+from .config import config_exists, init_config, llm as _llm_cfg, qqbot as _qqbot, workspace_path
 from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
 from .memory import create_memory
@@ -34,6 +35,25 @@ def _register_plugins() -> None:
     llm_registry.register("openai")(OpenAIProvider)
 
 
+def _ensure_deps() -> None:
+    """一次性检查并安装所有可选依赖。"""
+    missing: list[str] = []
+    for mod, pkg in [
+        ("fastapi", "fastapi"),
+        ("uvicorn", "uvicorn"),
+        ("websockets", "websockets"),
+    ]:
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(pkg)
+    if not missing:
+        return
+    import subprocess
+    log.info("正在安装缺失依赖: %s ...", ", ".join(missing))
+    subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
+
+
 def _build_agent(agent_bus: AgentBus, message_bus: MessageBus) -> AgentLoop:
     store = SqliteStore(workspace_path() / "history.db")
     llm = llm_registry.create("openai")
@@ -51,21 +71,35 @@ def _build_agent(agent_bus: AgentBus, message_bus: MessageBus) -> AgentLoop:
 
 
 async def _start_channels(message_bus: MessageBus) -> None:
-    """根据配置按需启动 channel。每个 channel 自行决定是否可用。"""
+    """根据配置按需启动 channel。"""
     app_id = _qqbot("app_id")
     secret = _qqbot("secret")
     if app_id and secret:
-        try:
-            from .channel.qqbot import QQBotChannel
-            ch = QQBotChannel(app_id=app_id, client_secret=secret, bus=message_bus)
-            await ch.start()
-        except ImportError:
-            log.warning("websockets not installed, QQBot channel disabled")
+        from .channel.qqbot import QQBotChannel
+        ch = QQBotChannel(app_id=app_id, client_secret=secret, bus=message_bus)
+        await ch.start()
+
+
+def _ensure_config() -> None:
+    """确保 config.toml 存在且已填写 api_key。"""
+    if not config_exists():
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        p = init_config()
+        print(f"已生成默认配置文件: {p.resolve()}")
+        print("请编辑配置文件中的 api_key 等选项，然后重新运行 mmsg serve")
+        sys.exit(0)
+
+    if _llm_cfg("api_key", "") == "sk-your-api-key-here":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        print("错误: 请先在 config.toml 中填写正确的 api_key，然后重新运行 mmsg serve")
+        sys.exit(1)
 
 
 async def _serve(host: str, port: int) -> None:
+    _ensure_config()
     workspace_path().mkdir(parents=True, exist_ok=True)
     setup_logging()
+    _ensure_deps()
     _register_plugins()
 
     agent_bus = AgentBus()
@@ -88,10 +122,16 @@ async def _serve(host: str, port: int) -> None:
         start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876)
     )
 
-    await run_tcp_server(message_bus, host=host, port=port)
+    try:
+        await run_tcp_server(message_bus, host=host, port=port)
+    except asyncio.CancelledError:
+        log.info("服务已关闭")
+        dashboard_task.cancel()
+        # 不重新抛出，让 asyncio.run() 正常退出
 
 
 async def _batch(user_input: str) -> None:
+    _ensure_config()
     workspace_path().mkdir(parents=True, exist_ok=True)
     setup_logging()
     _register_plugins()

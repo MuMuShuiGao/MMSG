@@ -1,7 +1,7 @@
 """统一 CLI 入口。
 
 用法:
-    mmsg serve              启动服务端
+    mmsg serve              启动服务端（自动生成 config.toml，自动安装缺失依赖）
     mmsg cli                启动 TUI 客户端
     mmsg --print "问题"     单次批处理，直接输出结果
 """
@@ -13,6 +13,7 @@ import sys
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         prog="mmsg",
         description="MMSG Agent",
@@ -36,10 +37,16 @@ def main() -> None:
 
     if args.query:
         from .app import _batch
-        asyncio.run(_batch(args.query))
+        try:
+            asyncio.run(_batch(args.query))
+        except KeyboardInterrupt:
+            pass
     elif args.command == "serve":
         from .app import _serve
-        asyncio.run(_serve(args.host, args.port))
+        try:
+            asyncio.run(_serve(args.host, args.port))
+        except KeyboardInterrupt:
+            pass
     elif args.command == "cli":
         from .ui.cli import main as cli_main
         cli_main()

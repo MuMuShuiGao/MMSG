@@ -124,4 +124,5 @@ async def start_dashboard(
     app = _build_app(store, markdown)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
+    log.info("Dashboard → http://%s:%d", host, port)
     await server.serve()
