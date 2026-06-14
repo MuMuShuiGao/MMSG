@@ -146,7 +146,11 @@ class AgentLoop:
             if chunk.done:
                 await self._persist_turn([user_tr] + chunk.records)
                 await self.bus.observe(
-                    AgentEvent.AfterTurn, self.name, {"final": chunk.content}
+                    AgentEvent.AfterTurn, self.name, {
+                        "final": chunk.content,
+                        "source": self._current_source,
+                        "session_id": self._sessions.get(self._current_source, ""),
+                    }
                 )
             yield chunk
 

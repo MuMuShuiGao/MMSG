@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 from ..bus.messagebus import MessageBus, OutboundItem
 
@@ -94,7 +95,10 @@ class QQBotChannel:
     async def _heartbeat(self, ws: Any, interval_ms: int, seq_fn: Any) -> None:
         while True:
             await asyncio.sleep(max(1, interval_ms / 1000))
-            await ws.send(json.dumps({"op": 1, "d": seq_fn()}))
+            try:
+                await ws.send(json.dumps({"op": 1, "d": seq_fn()}))
+            except ConnectionClosed:
+                return  # 连接已关闭，安静退出
 
     async def _handle_c2c(self, data: dict) -> None:
         author = data.get("author") or {}

@@ -44,6 +44,23 @@ class SqliteStore:
 
             CREATE INDEX IF NOT EXISTS idx_msg_session
                 ON message(session_id, seq);
+
+            CREATE TABLE IF NOT EXISTS curiosity_note (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id     TEXT,
+                content        TEXT NOT NULL DEFAULT '',
+                category       TEXT NOT NULL DEFAULT 'curiosity',
+                quality        INTEGER NOT NULL DEFAULT 3,
+                needs_research INTEGER NOT NULL DEFAULT 0,
+                status         TEXT NOT NULL DEFAULT 'pending',
+                triggered_at   TEXT,
+                merged_from    TEXT,
+                created_at     TEXT NOT NULL,
+                updated_at     TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_note_status
+                ON curiosity_note(status, updated_at DESC);
         """)
         self._conn.commit()
 

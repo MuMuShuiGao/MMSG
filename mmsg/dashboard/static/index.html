@@ -184,6 +184,7 @@ function SessionsView() {
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState("");
   const [titleEdit, setTitleEdit] = useState(null);
+  const [genLoading, setGenLoading] = useState(false);
 
   useEffect(() => { api("/api/sessions").then(setSessions).catch(() => {}); }, []);
 
@@ -264,6 +265,23 @@ function SessionsView() {
                   <span style={{fontSize:11,color:"#555"}}>({messages.length} 条消息)</span>
                   <span style={{fontSize:11,color:"#6b7280"}}>创建：{fmtTs(sessions.find(s=>s.id===selectedId)?.created_at)}</span>
                   <span style={{fontSize:11,color:"#6b7280"}}>最新：{fmtTs(sessions.find(s=>s.id===selectedId)?.updated_at)}</span>
+                  <button
+                    disabled={genLoading}
+                    onClick={async () => {
+                      setGenLoading(true);
+                      try {
+                        const r = await api(`/api/curiosity/trigger-curiosity/${selectedId}`, { method: "POST" });
+                        toast(`已生成 ${r.generated} 条 curiosity note`);
+                      } catch(e) { toast("生成失败，查看后台日志"); }
+                      finally { setGenLoading(false); }
+                    }}
+                    style={{marginLeft:"auto",padding:"7px 16px",borderRadius:10,border:"none",
+                      background: genLoading ? "#94a3b8" : "linear-gradient(135deg, #f59e0b, #d97706)", color:"#fff",
+                      cursor: genLoading ? "wait" : "pointer", fontSize:12, fontWeight:600,
+                      boxShadow: genLoading ? "none" : "0 2px 8px rgba(245,158,11,.25)",
+                      transition: "all .2s cubic-bezier(.34,1.4,.64,1)"}}
+                    title="Dashboard: 基于当前会话生成 curiosity notes"
+                  >{genLoading ? "生成中..." : "生成 Notes"}</button>
                 </>
               )}
             </div>
@@ -409,6 +427,246 @@ function MemoryView() {
   );
 }
 
+// ── Curiosity Tab ──
+function CuriosityView() {
+  const [notes, setNotes] = useState([]);
+  const [simResult, setSimResult] = useState(null);
+  const [loading, setLoading] = useState(null); // null | "consolidate" | "simulate" | "execute"
+  const [actionLog, setActionLog] = useState([]); // [{ts, action, detail}]
+
+  const load = () => api("/api/curiosity/notes").then(setNotes).catch(() => {});
+
+  useEffect(() => { load(); }, []);
+
+  const nowTs = () => new Date().toLocaleTimeString("zh-CN", {hour:"2-digit",minute:"2-digit",second:"2-digit"});
+
+  const addLog = (action, detail) => {
+    setActionLog(prev => [{ts: nowTs(), action, detail}, ...prev].slice(0, 12));
+  };
+
+  const dismiss = async (id) => {
+    await api(`/api/curiosity/notes/${id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({status: "dismissed"}) });
+    load();
+    toast("已忽略");
+  };
+
+  const raiseQ = async (id, q) => {
+    const nq = Math.min(5, q + 1);
+    await api(`/api/curiosity/notes/${id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({quality: nq}) });
+    load();
+  };
+
+  const lowerQ = async (id, q) => {
+    const nq = Math.max(1, q - 1);
+    await api(`/api/curiosity/notes/${id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({quality: nq}) });
+    load();
+  };
+
+  const btnStyle = (key, bg) => ({
+    padding: "8px 18px", borderRadius: 10, border: "none", color: "#fff",
+    cursor: loading ? "wait" : "pointer", fontSize: 13, fontWeight: 600,
+    background: loading === key ? "#94a3b8" : bg,
+    transition: "all .2s cubic-bezier(.34,1.4,.64,1)",
+    boxShadow: loading === key ? "none" : "0 2px 8px rgba(0,0,0,.15)",
+    transform: loading === key ? "none" : "translateY(0)",
+  });
+
+  const pending = notes.filter(n => n.status === "pending");
+  const pushed = notes.filter(n => n.status === "pushed");
+  const dismissed = notes.filter(n => n.status === "dismissed");
+
+  const catLabel = c => ({follow_up: "🔁 追问", concern: "💛 关心", curiosity: "💡 好奇"}[c] || c);
+  const qStars = q => "★".repeat(q) + "☆".repeat(5 - q);
+
+  const verdictMeta = v => {
+    const map = {
+      would_push:          { color: "#16a34a", bg: "rgba(34,197,94,.12)",   border: "#22c55e" },
+      pushed:              { color: "#16a34a", bg: "rgba(34,197,94,.12)",   border: "#22c55e" },
+      skip:                { color: "#64748b", bg: "rgba(148,163,184,.12)", border: "#94a3b8" },
+      no_candidates:       { color: "#64748b", bg: "rgba(148,163,184,.12)", border: "#94a3b8" },
+      blocked_by_quiet_hours: { color: "#f59e0b", bg: "rgba(245,158,11,.12)", border: "#f59e0b" },
+      score_too_low:       { color: "#f59e0b", bg: "rgba(245,158,11,.12)", border: "#f59e0b" },
+      generation_failed:   { color: "#ef4444", bg: "rgba(239,68,68,.08)",   border: "#ef4444" },
+      push_failed:         { color: "#ef4444", bg: "rgba(239,68,68,.08)",   border: "#ef4444" },
+      empty_message:       { color: "#f59e0b", bg: "rgba(245,158,11,.12)", border: "#f59e0b" },
+    };
+    return map[v] || map.skip;
+  };
+
+  const verdictLabel = v => ({
+    would_push: "会推送", pushed: "已推送", skip: "跳过",
+    no_candidates: "无候选", blocked_by_quiet_hours: "被安静时段阻止",
+    score_too_low: "评分不足，未推送", generation_failed: "消息生成失败",
+    push_failed: "推送失败", empty_message: "生成消息为空",
+  }[v] || v);
+
+  return (
+    <div className="usage-panel">
+      <div className="usage-cards">
+        <div className="usage-card">
+          <div className="label">待处理</div>
+          <div className="value">{pending.length}</div>
+        </div>
+        <div className="usage-card">
+          <div className="label">已推送（今日）</div>
+          <div className="value">{pushed.filter(n => n.triggered_at && new Date(n.triggered_at).toDateString() === new Date().toDateString()).length}</div>
+        </div>
+        <div className="usage-card">
+          <div className="label">已忽略</div>
+          <div className="value">{dismissed.length}</div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12,flexWrap:"wrap"}}>
+        <h3 style={{color:"#1e293b",fontSize:15,fontWeight:700,margin:0}}>全部 Notes</h3>
+        <button disabled={!!loading} onClick={async () => {
+          setLoading("consolidate");
+          addLog("立即整理", "正在调用 LLM 筛选 pending notes...");
+          try {
+            const r = await api("/api/curiosity/trigger-consolidate", { method: "POST" });
+            addLog("立即整理", `完成 - ${r.count} 条 pending 候选`);
+            toast(`整理完成，${r.count} 条 pending 候选`);
+            load();
+          } catch(e) { addLog("立即整理", "失败"); toast("整理失败"); }
+          finally { setLoading(null); }
+        }} style={btnStyle("consolidate", "#4f46e5")}
+          title="Dashboard: 立即运行 LLM 整理筛选 pending notes">{loading === "consolidate" ? "整理中..." : "立即整理"}</button>
+        <button disabled={!!loading} onClick={async () => {
+          setLoading("simulate");
+          addLog("模拟推送", "正在整理 -> 决策 -> 生成预览...");
+          try {
+            const r = await api("/api/curiosity/simulate-push", { method: "POST" });
+            setSimResult(r);
+            addLog("模拟推送", `结果: ${verdictLabel(r.verdict)}`);
+            toast(`模拟完成: ${verdictLabel(r.verdict)}`);
+            load();
+          } catch(e) { addLog("模拟推送", "失败"); toast("模拟失败"); }
+          finally { setLoading(null); }
+        }} style={btnStyle("simulate", "#db2777")}
+          title="Dashboard: 模拟完整推送流程，不实际发送消息">{loading === "simulate" ? "分析中..." : "模拟推送"}</button>
+        <button disabled={!!loading} onClick={async () => {
+          if (!confirm("确定要执行真实推送吗？消息将发送到 channel。")) return;
+          setLoading("execute");
+          addLog("执行推送", "正在整理 -> 决策 -> 推送...");
+          try {
+            const r = await api("/api/curiosity/execute-push", { method: "POST" });
+            setSimResult(r);
+            addLog("执行推送", `结果: ${verdictLabel(r.verdict)}`);
+            toast(`${verdictLabel(r.verdict)}`);
+            load();
+          } catch(e) { addLog("执行推送", "失败"); toast("推送失败"); }
+          finally { setLoading(null); }
+        }} style={btnStyle("execute", "#16a34a")}
+          title="Dashboard: 执行真实推送，消息将发送到 channel">{loading === "execute" ? "推送中..." : "执行推送"}</button>
+      </div>
+      {simResult && (() => {
+        const vm = verdictMeta(simResult.verdict);
+        return (
+        <div style={{marginBottom:16,padding:16,borderRadius:12,background:vm.bg,border:`1px solid ${vm.border}`,animation:"bubbleIn .35s cubic-bezier(.34,1.2,.64,1) both"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <strong style={{fontSize:15,color:vm.color}}>{verdictLabel(simResult.verdict)}</strong>
+            <span style={{fontSize:11,color:"#94a3b8",marginLeft:"auto"}}>{nowTs()}</span>
+            {simResult.quiet_hours && <span style={{fontSize:12,color:"#f59e0b"}}>[安静时段]</span>}
+          </div>
+          {simResult.best && (
+            <div style={{fontSize:13,color:"#334155",lineHeight:1.8}}>
+              <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:4}}>
+                <span><strong>静默时长：</strong>{simResult.hours_since_active}h</span>
+                <span><strong>今日已推：</strong>{simResult.pushed_today}次</span>
+                <span><strong>整理候选：</strong>{simResult.consolidated || 0}条</span>
+              </div>
+              {simResult.best.score_breakdown?.formula && (
+                <div><strong>评分公式：</strong><code style={{fontSize:12,background:"rgba(0,0,0,.06)",padding:"1px 6px",borderRadius:4}}>{simResult.best.score_breakdown.formula}</code> = <strong>{simResult.best.score_breakdown.final}</strong>（{'＞'}0 则推）</div>
+              )}
+              <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"rgba(255,255,255,.7)"}}>
+                <strong>候选内容：</strong>{simResult.best.content}
+              </div>
+              {simResult.best.message_preview && (
+                <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"rgba(79,70,229,.08)",color:"#4338ca"}}>
+                  <strong>推送预览：</strong>{simResult.best.message_preview}
+                </div>
+              )}
+              {simResult.best.message_sent && (
+                <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"rgba(22,163,74,.1)",color:"#16a34a"}}>
+                  <strong>已发送：</strong>{simResult.best.message_sent}
+                </div>
+              )}
+              {simResult.candidates && simResult.candidates.length > 1 && (
+                <details style={{marginTop:8}}>
+                  <summary style={{cursor:"pointer",color:"#64748b",fontSize:12}}>其他 {simResult.candidates.length - 1} 条候选</summary>
+                  {simResult.candidates.slice(1).map((c,i) => (
+                    <div key={i} style={{fontSize:12,color:"#64748b",padding:"4px 0"}}>
+                      [{c._score}] {c.content}
+                    </div>
+                  ))}
+                </details>
+              )}
+            </div>
+          )}
+        </div>
+        );
+      })()}
+      {actionLog.length > 0 && (
+        <details style={{marginBottom:16}} open>
+          <summary style={{cursor:"pointer",fontSize:13,fontWeight:600,color:"#475569",marginBottom:8}}>
+            Dashboard 操作记录
+            <button onClick={() => setActionLog([])} style={{marginLeft:10,background:"none",border:"1px solid #e2e8f0",borderRadius:6,fontSize:11,color:"#94a3b8",cursor:"pointer",padding:"2px 8px"}}>清空</button>
+          </summary>
+          <div style={{maxHeight:180,overflowY:"auto",fontSize:12,fontFamily:"'Fira Code','Cascadia Code',monospace",background:"rgba(255,255,255,.6)",borderRadius:10,border:"1px solid rgba(148,163,184,.15)",padding:"8px 12px"}}>
+            {actionLog.map((e, i) => (
+              <div key={i} style={{padding:"3px 0",display:"flex",gap:10,borderBottom:i<actionLog.length-1?"1px solid rgba(148,163,184,.08)":"none"}}>
+                <span style={{color:"#94a3b8",flexShrink:0}}>{e.ts}</span>
+                <span style={{color:"#334155",flexShrink:0,minWidth:100}}>{e.action}</span>
+                <span style={{color:"#64748b"}}>{e.detail}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+      <table className="usage-table">
+        <thead>
+          <tr>
+            <th>内容</th>
+            <th>分类</th>
+            <th>质量</th>
+            <th>状态</th>
+            <th>更新时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {notes.map(n => (
+            <tr key={n.id} style={n.status === "dismissed" ? {opacity: .5} : {}}>
+              <td style={{maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}} title={n.content}>
+                {n.content}
+              </td>
+              <td style={{fontSize:12}}>{catLabel(n.category)}</td>
+              <td style={{fontSize:12, color:"#f59e0b"}}>{qStars(n.quality)}</td>
+              <td style={{fontSize:12}}>
+                <span style={{padding:"2px 8px",borderRadius:6,fontSize:11,fontWeight:600,
+                  background: n.status==="pending"?"#dbeafe":n.status==="pushed"?"#d1fae5":"#f3f4f6",
+                  color: n.status==="pending"?"#1d4ed8":n.status==="pushed"?"#065f46":"#6b7280"
+                }}>{n.status}</span>
+              </td>
+              <td style={{fontSize:11,color:"#94a3b8"}}>{fmtTs(n.updated_at)}</td>
+              <td style={{fontSize:12}}>
+                {n.status === "pending" && (
+                  <>
+                    <button onClick={() => raiseQ(n.id, n.quality)} title="提升优先级" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,marginRight:4}}>⬆</button>
+                    <button onClick={() => lowerQ(n.id, n.quality)} title="降低优先级" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,marginRight:6}}>⬇</button>
+                    <button onClick={() => dismiss(n.id)} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontWeight:600,fontSize:12}}>忽略</button>
+                  </>
+                )}
+              </td>
+            </tr>
+          ))}
+          {notes.length === 0 && <tr><td colSpan="6" style={{textAlign:"center",color:"#9ca3af"}}>暂无 curiosity notes</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── App ──
 function App() {
   const [tab, setTab] = useState("sessions");
@@ -421,9 +679,10 @@ function App() {
           <button className={`tab${tab==="sessions"?" active":""}`} onClick={()=>setTab("sessions")}>💬 Sessions</button>
           <button className={`tab${tab==="usage"?" active":""}`} onClick={()=>setTab("usage")}>📊 Usage</button>
           <button className={`tab${tab==="memory"?" active":""}`} onClick={()=>setTab("memory")}>🧠 Memory</button>
+          <button className={`tab${tab==="curiosity"?" active":""}`} onClick={()=>setTab("curiosity")}>💭 Curiosity</button>
         </div>
       </div>
-      {tab === "sessions" ? <SessionsView /> : tab === "usage" ? <UsageView /> : <MemoryView />}
+      {tab === "sessions" ? <SessionsView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : <CuriosityView />}
     </div>
   );
 }

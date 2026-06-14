@@ -13,6 +13,10 @@ _DEFAULT_TEMPLATE = """\
 # 请根据你的环境修改以下配置，然后重新运行 mmsg serve
 # ============================================================
 
+[core]
+# 日志等级: DEBUG / INFO / WARNING / ERROR
+log_level = "INFO"
+
 [workspace]
 # 工作目录（数据存储位置）
 path = "~/.MMSG/workspace"
@@ -38,6 +42,17 @@ secret = ""
 # 飞书机器人配置（可选，留空则不启用）
 app_id = ""
 app_secret = ""
+
+[proactive]
+# 主动聊天配置（可选）
+channel = ""
+# 主动强度: strong(2h) / medium(4h) / weak(24h)
+intensity = "medium"
+# 静默免责时段（此时间段内不主动说话）
+quiet_start = "00:00"
+quiet_end = "07:00"
+# 整理间隔（秒），默认 900（15 分钟），调试时可改为 30
+consolidate_interval = 900
 """
 
 
@@ -86,3 +101,11 @@ def qqbot(key: str, default=""):
 
 def feishu(key: str, default=""):
     return _load().get("feishu", {}).get(key, default)
+
+
+def log_level(default: str = "INFO") -> str:
+    return _load().get("core", {}).get("log_level", default)
+
+
+def proactive(key: str, default=""):
+    return _load().get("proactive", {}).get(key, default)

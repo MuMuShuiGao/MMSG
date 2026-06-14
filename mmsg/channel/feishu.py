@@ -13,11 +13,28 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from typing import Any
 
 from ..bus.messagebus import MessageBus, OutboundItem
 
 log = logging.getLogger("mmsg.channel.feishu")
+
+
+class _LarkLogFilter(logging.Filter):
+    """屏蔽 Lark SDK 在 WebSocket 正常关闭时输出的 ERROR 日志。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # suppress: "receive message loop exit, err: sent 1000 (OK); then received 1000 (OK) bye"
+        if record.levelno >= logging.ERROR and record.name == "Lark":
+            msg = record.getMessage()
+            if "received 1000 (OK)" in msg:
+                return False
+        return True
+
+
+_lark_filter = _LarkLogFilter()
+logging.getLogger("Lark").addFilter(_lark_filter)
 
 # REST 相关类型（主线程 import 安全，不含 ws 模块）
 _lark_Client: Any = None
@@ -61,6 +78,9 @@ class FeishuChannel:
         self._rest_client: Any = None        # lark_oapi.Client
         self._ws_future: asyncio.Future | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._shutdown = threading.Event()   # 通知 executor 线程退出
+        self._ws_client_ref: Any = None      # lark_oapi WsClient 引用，用于 stop 时控制
+        self._ws_loop_ref: Any = None        # WS 线程内的事件循环
         # 流式输出状态：chat_id → {message_id, edit_count}
         self._streams: dict[str, dict[str, Any]] = {}
 
@@ -88,9 +108,61 @@ class FeishuChannel:
         log.info("Feishu channel started (app_id=%s)", self._app_id)
 
     async def stop(self) -> None:
-        if self._ws_future:
-            self._ws_future.cancel()
+        # 1. 发信号：禁止 SDK 继续重连
+        self._shutdown.set()
+        if self._ws_client_ref is not None:
+            try:
+                self._ws_client_ref._auto_reconnect = False
+            except Exception:
+                pass
+
+        # 2. 先关闭 WebSocket 连接，让 _receive_message_loop 的 recv() 收到
+        #    ConnectionClosed 异常，走正常 _disconnect() 清理流程。否则直接
+        #    loop.stop() 会中止正在 await recv() 的 task，后续 finally 清理
+        #    尝试 call_soon 到已关闭的循环 → RuntimeError: Event loop is closed。
+        if self._ws_client_ref is not None and self._ws_loop_ref is not None:
+            try:
+                conn = getattr(self._ws_client_ref, '_conn', None)
+                if conn is not None:
+                    fut = asyncio.run_coroutine_threadsafe(
+                        conn.close(), self._ws_loop_ref,
+                    )
+                    fut.result(timeout=3)
+            except Exception:
+                pass
+
+        # 3. 等待 _receive_message_loop 完成清理（_disconnect + 放弃重连）
+        await asyncio.sleep(0.5)
+
+        # 4. 取消 WS 线程事件循环内所有待处理任务，避免 "Task was destroyed
+        #    but it is pending!" 警告（_ping_loop / _start_clear_cron 等）
+        if self._ws_loop_ref is not None:
+            try:
+                def _cancel_all():
+                    for t in asyncio.all_tasks(self._ws_loop_ref):
+                        t.cancel()
+
+                self._ws_loop_ref.call_soon_threadsafe(_cancel_all)
+                # 给 task 一点时间响应用 cancel
+                await asyncio.sleep(0.2)
+            except Exception:
+                pass
+
+        # 5. 停止 WS 线程内的事件循环，让 ws.start() 返回
+        if self._ws_loop_ref is not None:
+            try:
+                self._ws_loop_ref.call_soon_threadsafe(self._ws_loop_ref.stop)
+            except Exception:
+                pass
+
+        # 6. 等待 executor 线程结束（不要 cancel，让线程自然退出）
+        if self._ws_future is not None:
+            try:
+                await asyncio.wait_for(self._ws_future, timeout=5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
             self._ws_future = None
+
         log.info("Feishu channel stopped")
 
     # ── WS 线程入口 ──────────────────────────────────
@@ -104,6 +176,10 @@ class FeishuChannel:
         """
         import sys
 
+        # 还没开始就被叫停了
+        if self._shutdown.is_set():
+            return
+
         # 移除已缓存的 ws 模块，迫使在当前线程内重新初始化
         for key in list(sys.modules.keys()):
             if key.startswith("lark_oapi.ws"):
@@ -112,6 +188,34 @@ class FeishuChannel:
         from lark_oapi.core.enum import LogLevel
         from lark_oapi.ws import Client as WsClient
         from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
+        import lark_oapi.ws.client as _ws_client_module
+
+        # 捕获 WS 线程自己的事件循环，供 stop() 跨线程关闭
+        self._ws_loop_ref = _ws_client_module.loop
+
+        # 静默 WS 正常关闭时的 ConnectionClosedOK task 异常
+        from websockets.exceptions import ConnectionClosedOK as _CC_OK
+
+        def _quiet_handler(loop, ctx):
+            exc = ctx.get("exception")
+            if isinstance(exc, _CC_OK):
+                return
+            loop.default_exception_handler(ctx)
+
+        self._ws_loop_ref.set_exception_handler(_quiet_handler)
+
+        shutdown_flag = self._shutdown
+
+        def _on_reconnecting() -> None:
+            if shutdown_flag.is_set():
+                # 关闭中，不再重连，直接停掉事件循环
+                try:
+                    _ws_client_module.loop.call_soon_threadsafe(
+                        _ws_client_module.loop.stop
+                    )
+                except Exception:
+                    pass
+
         handler = EventDispatcherHandler.builder("", "") \
             .register_p2_im_message_receive_v1(self._on_message_receive) \
             .build()
@@ -122,7 +226,10 @@ class FeishuChannel:
             event_handler=handler,
             log_level=LogLevel.ERROR,
         )
-        # start() 是阻塞的，在此线程内运行直到进程退出
+        ws.on_reconnecting = _on_reconnecting
+        self._ws_client_ref = ws
+
+        # start() 是阻塞的，在此线程内运行直到进程退出或 stop() 关闭事件循环
         ws.start()
 
     # ── Event callback（WS 线程内调用）───────────────

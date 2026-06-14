@@ -8,7 +8,7 @@ import sys
 from .agent import AgentLoop
 from .bus.agent import AgentBus, AgentEvent
 from .bus.messagebus import MessageBus
-from .config import config_exists, feishu as _feishu, init_config, llm as _llm_cfg, qqbot as _qqbot, workspace_path
+from .config import config_exists, feishu as _feishu, init_config, llm as _llm_cfg, log_level, proactive as _proactive, qqbot as _qqbot, workspace_path
 from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
 from .memory import create_memory
@@ -56,11 +56,14 @@ def _ensure_deps() -> None:
     subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
 
 
-def _build_agent(agent_bus: AgentBus, message_bus: MessageBus) -> AgentLoop:
-    store = SqliteStore(workspace_path() / "history.db")
-    llm = llm_registry.create("openai")
-    tools = {name: tool_registry.create(name) for name in tool_registry.names()}
-    memory = create_memory()
+def _build_agent(
+    agent_bus: AgentBus,
+    message_bus: MessageBus,
+    store: SqliteStore,
+    llm: OpenAIProvider,
+    tools: dict,
+    memory: object,
+) -> AgentLoop:
     return AgentLoop(
         agent_bus=agent_bus,
         llm=llm,
@@ -72,8 +75,10 @@ def _build_agent(agent_bus: AgentBus, message_bus: MessageBus) -> AgentLoop:
     )
 
 
-async def _start_channels(message_bus: MessageBus) -> None:
-    """根据配置按需启动 channel。"""
+async def _start_channels(message_bus: MessageBus) -> list:
+    """根据配置按需启动 channel，返回已启动的 channel 列表（供关闭时 stop）。"""
+    channels: list = []
+
     # QQBot
     app_id = _qqbot("app_id")
     secret = _qqbot("secret")
@@ -81,6 +86,7 @@ async def _start_channels(message_bus: MessageBus) -> None:
         from .channel.qqbot import QQBotChannel
         ch = QQBotChannel(app_id=app_id, client_secret=secret, bus=message_bus)
         await ch.start()
+        channels.append(ch)
 
     # Feishu
     fs_app_id = _feishu("app_id")
@@ -89,6 +95,9 @@ async def _start_channels(message_bus: MessageBus) -> None:
         from .channel.feishu import FeishuChannel
         ch = FeishuChannel(app_id=fs_app_id, app_secret=fs_secret, bus=message_bus)
         await ch.start()
+        channels.append(ch)
+
+    return channels
 
 
 def _ensure_config() -> None:
@@ -109,15 +118,32 @@ def _ensure_config() -> None:
 async def _serve(host: str, port: int) -> None:
     _ensure_config()
     workspace_path().mkdir(parents=True, exist_ok=True)
-    setup_logging()
+    setup_logging(level=log_level())
     _ensure_deps()
     _register_plugins()
+
+    # 静默 Lark SDK WebSocket 正常关闭时的 asyncio task 异常警告
+    from websockets.exceptions import ConnectionClosedOK
+
+    def _quiet_asyncio_exception(loop, ctx):
+        exc = ctx.get("exception")
+        if isinstance(exc, ConnectionClosedOK):
+            return
+        loop.default_exception_handler(ctx)
+
+    asyncio.get_running_loop().set_exception_handler(_quiet_asyncio_exception)
 
     agent_bus = AgentBus()
     message_bus = MessageBus()
     attach_console_sink(agent_bus, verbose=False)
 
-    agent = _build_agent(agent_bus, message_bus)
+    # 共享基础设施
+    store = SqliteStore(workspace_path() / "history.db")
+    llm = llm_registry.create("openai")
+    tools = {name: tool_registry.create(name) for name in tool_registry.names()}
+    memory = create_memory()
+
+    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory)
 
     async def _bridge_observable(evt) -> None:
         if evt.type in _OBSERVABLE_TYPES:
@@ -126,32 +152,71 @@ async def _serve(host: str, port: int) -> None:
     agent_bus.subscribe("*", _bridge_observable)
     asyncio.create_task(agent.serve())
 
-    await _start_channels(message_bus)
+    # 主动引擎
+    proactive = None
+    proactive_channel = _proactive("channel", "")
+    if proactive_channel:
+        from .proactive import ProactiveEngine
+        proactive = ProactiveEngine(
+            store=store,
+            llm=llm,
+            memory=memory,
+            tools=tools,
+            message_bus=message_bus,
+            agent_bus=agent_bus,
+        )
+        asyncio.create_task(proactive.serve())
+
+    channels = await _start_channels(message_bus)
 
     from .dashboard import start_dashboard
     dashboard_task = asyncio.create_task(
-        start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876)
+        start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876, proactive_engine=proactive)
     )
 
+    log.info("服务已启动完成")
     try:
         await run_tcp_server(message_bus, host=host, port=port)
     except asyncio.CancelledError:
+        pass
+    finally:
+        log.info("正在关闭服务...")
+        # 先停 channel（特别是飞书的 executor 线程）
+        for ch in channels:
+            try:
+                await ch.stop()
+            except Exception:
+                log.exception("停止 channel 异常: %s", type(ch).__name__)
+        # 再取消所有后台任务（stop 后收集，包含 channel 残留 task）
+        background_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for t in background_tasks:
+            t.cancel()
+        if background_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*background_tasks, return_exceptions=True),
+                    timeout=5,
+                )
+            except asyncio.TimeoutError:
+                pass
         log.info("服务已关闭")
-        dashboard_task.cancel()
-        # 不重新抛出，让 asyncio.run() 正常退出
 
 
 async def _batch(user_input: str) -> None:
     _ensure_config()
     workspace_path().mkdir(parents=True, exist_ok=True)
-    setup_logging()
+    setup_logging(level=log_level())
     _register_plugins()
 
     agent_bus = AgentBus()
     message_bus = MessageBus()
     attach_console_sink(agent_bus, verbose=False)
 
-    agent = _build_agent(agent_bus, message_bus)
+    store = SqliteStore(workspace_path() / "history.db")
+    llm = llm_registry.create("openai")
+    tools = {name: tool_registry.create(name) for name in tool_registry.names()}
+    memory = create_memory()
+    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory)
     final = ""
     async for chunk in agent.run(user_input):
         if chunk.done:
