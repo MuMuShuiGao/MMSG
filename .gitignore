@@ -4,3 +4,24 @@ __pycache__/
 *.egg-info/
 mmsg.log
 
+# Build & packaging
+dist/
+build/
+
+# Virtualenv
+.venv/
+venv/
+
+# Test cache
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Eval outputs
+eval/results/
+
+# Bytecode
+*.pyc
+
