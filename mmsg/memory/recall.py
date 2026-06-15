@@ -9,10 +9,11 @@ from typing import Any
 
 import jieba
 
+from mmsg.common import parse_json
+
 from .fact import Fact
 from .protocol import MemoryRuntime
 from ..llm.base import ChatMessage, LLMProvider
-from .engines.default._utils import parse_json
 from .engines.default.vector_store import VectorStore
 
 log = logging.getLogger("mmsg.memory.recall")

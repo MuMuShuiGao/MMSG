@@ -36,7 +36,6 @@ class EventBus:
     def __init__(self) -> None:
         self._observers: list[tuple[str, ObserverFn]] = []
         self._interceptors: list[tuple[str, InterceptorFn]] = []
-        self._lock = asyncio.Lock()
 
     def subscribe(self, pattern: str, handler: ObserverFn) -> Callable[[], None]:
         entry = (pattern, handler)
@@ -87,7 +86,7 @@ class EventBus:
         source: str,
         payload: dict[str, Any] | None = None,
     ) -> Event:
-        """Interceptor: 顺序执行,返回新 payload 改写管道。异常抛给调用方。"""
+        """Interceptor 顺序执行，返回新 payload 改写管道。异常抛给调用方。"""
         evt = Event(type=type, source=source, payload=payload or {})
         for pat, h in self._interceptors:
             if fnmatch.fnmatchcase(type, pat):

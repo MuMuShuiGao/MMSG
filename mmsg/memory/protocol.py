@@ -9,8 +9,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from .fact import Fact
-
 if TYPE_CHECKING:
     from ..llm.base import ChatMessage
 
@@ -49,16 +47,6 @@ class MemoryEngine(ABC):
     vector_store: Any = None       # VectorStore，子类须设置
     embed_provider: Any = None     # EmbeddingProvider，子类须设置
 
-    @abstractmethod
-    async def ingest_fact(self, fact: Fact) -> int:
-        """写入一条 fact 到向量库，返回 fact_id。"""
-        ...
-
-    @abstractmethod
-    async def query(self, query: str, k: int = 5) -> list[Fact]:
-        """语义检索，返回 top-k 相关 facts。"""
-        ...
-
 
 # ── 组合层 MemoryRuntime ─────────────────────────────────────
 
@@ -76,17 +64,9 @@ class MemoryRuntime:
         self.markdown = markdown
         self.engine = engine
 
-    async def ingest_fact(self, fact: Fact) -> int:
-        """写入一条 fact 到向量引擎，返回 fact_id。无引擎则返回 -1。"""
-        if self.engine:
-            return await self.engine.ingest_fact(fact)
-        return -1
-
-    async def recall(self, query: str, k: int = 5) -> list[Fact]:
-        """语义召回 — 仅走向量引擎。无引擎或空 query 返回空列表。"""
-        if self.engine and query:
-            return await self.engine.query(query, k)
-        return []
+    async def summarize(self, messages: list[ChatMessage]) -> None:
+        """摘要压缩 — 委托给 markdown 层的 consolidate。"""
+        await self.markdown.consolidate(messages)
 
     @property
     def vector_store(self):
@@ -95,10 +75,6 @@ class MemoryRuntime:
     @property
     def embed_provider(self):
         return self.engine.embed_provider if self.engine else None
-
-    async def summarize(self, messages: list[ChatMessage]) -> None:
-        """摘要压缩 — 委托给 markdown 层的 consolidate。"""
-        await self.markdown.consolidate(messages)
 
     def build_context_block(self) -> str:
         """返回长期记忆 + 近期摘要的拼接字符串块。

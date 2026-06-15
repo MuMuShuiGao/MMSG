@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from ...bus.agent import AgentEvent, AgentBus
 from ...llm.base import ChatMessage, LLMProvider, ToolCall
-from ...memory import Memory
+from ...memory import Fact, Memory
 from ...tools.base import Tool
 from ...prompt.segments import SystemPromptBuilder
 from ..context import LLMContext

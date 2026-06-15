@@ -10,8 +10,8 @@ import logging
 from datetime import datetime, timezone
 
 from mmsg.llm.base import ChatMessage, LLMProvider
+from mmsg.common import parse_json, parse_datetime_utc, hours_elapsed, in_quiet_hours
 from mmsg.memory.protocol import MarkdownMemoryLayer
-from ._utils import parse_json
 
 log = logging.getLogger("mmsg.memory.curator")
 
@@ -122,13 +122,7 @@ class MemoryCurator:
         self._store.set_memory_state("last_run_at", val)
 
     def _in_quiet_hours(self) -> bool:
-        if self._quiet_start == self._quiet_end:
-            return False
-        now = datetime.now().strftime("%H:%M")
-        if self._quiet_start <= self._quiet_end:
-            return self._quiet_start <= now < self._quiet_end
-        else:
-            return now >= self._quiet_start or now < self._quiet_end
+        return in_quiet_hours(self._quiet_start, self._quiet_end)
 
     # ── 主循环 ─────────────────────────────────────
 
@@ -158,10 +152,8 @@ class MemoryCurator:
         last_run = self._last_run_at
         if last_run:
             try:
-                last_dt = datetime.fromisoformat(last_run)
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-                hours_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+                last_dt = parse_datetime_utc(last_run)
+                hours_since = hours_elapsed(last_dt)
             except (TypeError, ValueError):
                 hours_since = 999
             return hours_since >= self._min_hours

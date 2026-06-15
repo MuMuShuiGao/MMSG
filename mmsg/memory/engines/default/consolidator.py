@@ -12,8 +12,8 @@ from typing import Any
 
 from mmsg.llm.base import ChatMessage, LLMProvider
 from mmsg.memory.fact import Fact
+from mmsg.common import parse_json, parse_datetime_utc, hours_elapsed, in_quiet_hours
 from mmsg.storage.sqlite import SqliteStore
-from ._utils import parse_json
 
 log = logging.getLogger("mmsg.memory.consolidator")
 
@@ -119,13 +119,7 @@ class Consolidator:
                 log.exception("事实提取失败")
 
     def _in_quiet_hours(self) -> bool:
-        if self._quiet_start == self._quiet_end:
-            return False
-        now = datetime.now().strftime("%H:%M")
-        if self._quiet_start <= self._quiet_end:
-            return self._quiet_start <= now < self._quiet_end
-        else:
-            return now >= self._quiet_start or now < self._quiet_end
+        return in_quiet_hours(self._quiet_start, self._quiet_end)
 
     def _should_run(self) -> bool:
         new_msgs = self._count_new_user_messages()
@@ -136,10 +130,8 @@ class Consolidator:
         last_run = self._last_run_at
         if last_run:
             try:
-                last_dt = datetime.fromisoformat(last_run)
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-                hours_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+                last_dt = parse_datetime_utc(last_run)
+                hours_since = hours_elapsed(last_dt)
             except (TypeError, ValueError):
                 hours_since = 999
             return hours_since >= self._min_hours

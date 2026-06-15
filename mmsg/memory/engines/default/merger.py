@@ -9,6 +9,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from mmsg.common import parse_datetime_utc, days_elapsed
+
 from .vector_store import VectorStore
 
 log = logging.getLogger("mmsg.memory.merger")
@@ -62,8 +64,8 @@ class Merger:
         if not last_run:
             return True
         try:
-            last_dt = datetime.fromisoformat(last_run)
-            days_since = (datetime.now(timezone.utc) - last_dt.replace(tzinfo=timezone.utc)).total_seconds() / 86400
+            last_dt = parse_datetime_utc(last_run)
+            days_since = days_elapsed(last_dt)
         except (TypeError, ValueError):
             return True
         return days_since >= self._min_days

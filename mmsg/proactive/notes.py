@@ -59,14 +59,6 @@ class NoteStore:
         )
         self._conn.commit()
 
-    def dismiss_note(self, note_id: int) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self._conn.execute(
-            "UPDATE curiosity_note SET status = 'dismissed', updated_at = ? WHERE id = ?",
-            (now, note_id),
-        )
-        self._conn.commit()
-
     # ---- read ----
 
     def get_pending_notes(self) -> list[CuriosityNote]:

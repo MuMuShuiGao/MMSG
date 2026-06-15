@@ -9,9 +9,8 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import logging
-import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .eventbus import EventBus, Event
 
@@ -24,41 +23,39 @@ TRANSPORT_RAW = "transport.raw"
 # 保留给 transport 跨进程 relay 使用
 MESSAGE_INBOUND = "message.inbound"
 
-OutboundHandler = Callable[["OutboundItem"], Awaitable[None]]
-
 
 @dataclass
-class InboundItem:
+class BusItem:
+    """消息总线 item，方向由队列/方法名承载。"""
     source: str
     payload: dict
-    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
 
-@dataclass
-class OutboundItem:
-    source: str
-    payload: dict
+# 向后兼容别名
+OutboundItem = BusItem
+
+OutboundHandler = Callable[["BusItem"], Awaitable[None]]
 
 
 class MessageBus:
     """消息总线：inbound/outbound 队列 + 可观测事件流。"""
 
     def __init__(self) -> None:
-        self._inbound: asyncio.Queue[InboundItem] = asyncio.Queue()
-        self._outbound: asyncio.Queue[OutboundItem] = asyncio.Queue()
+        self._inbound: asyncio.Queue[BusItem] = asyncio.Queue()
+        self._outbound: asyncio.Queue[BusItem] = asyncio.Queue()
         self._outbound_handlers: list[tuple[str, OutboundHandler]] = []
         self._dispatch_task: asyncio.Task | None = None
         self.events = EventBus()
 
     # ── Inbound（channel → agent）──────────────────────
 
-    async def publish_inbound(self, source: str, payload: dict) -> InboundItem:
+    async def publish_inbound(self, source: str, payload: dict) -> BusItem:
         """channel/TUI 发布入站消息到队列，非阻塞（除非队列满）。"""
-        item = InboundItem(source=source, payload=payload)
+        item = BusItem(source=source, payload=payload)
         await self._inbound.put(item)
         return item
 
-    async def consume_inbound(self) -> InboundItem:
+    async def consume_inbound(self) -> BusItem:
         """Agent 阻塞等待下一条入站消息。"""
         return await self._inbound.get()
 
@@ -66,7 +63,7 @@ class MessageBus:
 
     async def publish_outbound(self, source: str, payload: dict) -> None:
         """Agent 发布出站消息到分发队列。"""
-        await self._outbound.put(OutboundItem(source=source, payload=payload))
+        await self._outbound.put(BusItem(source=source, payload=payload))
 
     def subscribe_outbound(self, pattern: str, handler: OutboundHandler) -> Callable[[], None]:
         """channel 注册出站消息处理器，pattern 匹配 source 字段（fnmatch）。"""

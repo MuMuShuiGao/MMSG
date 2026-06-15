@@ -44,7 +44,6 @@ class LLMContext:
     ) -> None:
         self._memory = memory
         self._system_builder = system_builder
-        self.max_window = max_window
         self.max_window_turns = max_window // 2
         self.llm_input_turns = llm_input_turns
         self._summarize_every = summarize_every
@@ -83,7 +82,7 @@ class LLMContext:
     async def _apply_sliding_window(
         self, msgs: list[ChatMessage]
     ) -> list[ChatMessage]:
-        """滑动窗口：缓存最多 max_window 条，喂给 LLM 最多 llm_input_turns 轮。"""
+        """滑动窗口：缓存最多 max_window_turns 轮，喂给 LLM 最多 llm_input_turns 轮。"""
         system_msgs = [m for m in msgs if m.role == "system"]
         rest = [m for m in msgs if m.role != "system"]
 
@@ -144,6 +143,6 @@ def _format_recall_block(facts: list[Fact]) -> str | None:
         return None
     lines = ["# 与本次问题相关的历史记忆\n"]
     for f in facts:
-        ts = f.created_at[:10] if f.created_at else "?"
+        ts = f.created_at[:10]
         lines.append(f"- {f.content} [{ts}]")
     return "\n".join(lines)

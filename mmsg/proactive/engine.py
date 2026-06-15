@@ -12,6 +12,7 @@ from ..bus.agent import AgentBus
 from ..bus.messagebus import MessageBus
 from ..config import proactive as _cfg
 from ..llm.base import ChatMessage, LLMProvider
+from ..common import parse_json, parse_datetime_utc, hours_elapsed, in_quiet_hours
 from ..memory import Memory
 from ..storage.sqlite import SqliteStore
 from ..tools.base import Tool
@@ -486,22 +487,13 @@ class ProactiveEngine:
         if not self._last_active_at:
             return float(INTENSITY_HOURS.get(self._intensity, 4)) + 1  # 冷启动当作超阈值
         try:
-            last = datetime.fromisoformat(self._last_active_at)
-            now = datetime.now(timezone.utc)
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
-            return (now - last).total_seconds() / 3600
+            last = parse_datetime_utc(self._last_active_at)
+            return hours_elapsed(last)
         except (TypeError, ValueError):
             return float(INTENSITY_HOURS.get(self._intensity, 4)) + 1
 
     def _in_quiet_hours(self) -> bool:
-        if self._quiet_start == self._quiet_end:
-            return False
-        now = datetime.now().strftime("%H:%M")
-        if self._quiet_start <= self._quiet_end:
-            return self._quiet_start <= now < self._quiet_end
-        else:  # 跨午夜，如 23:00-07:00
-            return now >= self._quiet_start or now < self._quiet_end
+        return in_quiet_hours(self._quiet_start, self._quiet_end)
 
     def _quiet_seconds_until_end(self) -> int:
         now = datetime.now()
@@ -513,16 +505,8 @@ class ProactiveEngine:
 
     @staticmethod
     def _parse_json(raw: str) -> list[dict[str, Any]]:
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            lines = [line for line in lines if not line.startswith("```")]
-            raw = "\n".join(lines).strip()
-        try:
-            data = json.loads(raw)
-            return data if isinstance(data, list) else []
-        except json.JSONDecodeError:
-            return []
+        data = parse_json(raw)
+        return data if isinstance(data, list) else []
 
     def _read_recent_messages(self, session_id: str, limit: int) -> list[dict[str, Any]]:
         try:

@@ -107,22 +107,6 @@ class VectorStore:
         ).fetchone()
         return _row_to_fact(row) if row else None
 
-    def list_facts(self, limit: int = 100, offset: int = 0) -> list[Fact]:
-        rows = self._conn.execute(
-            "SELECT * FROM fact ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
-        return [_row_to_fact(r) for r in rows]
-
-    def count_facts(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM fact").fetchone()[0]
-
-    def delete_fact(self, fact_id: int) -> None:
-        self._conn.execute("DELETE FROM fact WHERE id = ?", (fact_id,))
-        self._conn.execute("DELETE FROM vec_fact WHERE fact_id = ?", (fact_id,))
-        self._conn.execute("DELETE FROM fts_fact WHERE rowid = ?", (fact_id,))
-        self._conn.commit()
-
     # ── hybrid 检索 ────────────────────────────────
 
     def hybrid_search(

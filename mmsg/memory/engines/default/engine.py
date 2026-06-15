@@ -46,12 +46,6 @@ class DefaultMemoryEngine(MemoryEngine):
         self.vector_store = vector_store
         self.embed_provider = embed_provider
 
-    async def ingest_fact(self, fact: Fact) -> int:
-        return self.vector_store.insert_fact(fact, embedding=fact.embedding)
-
-    async def query(self, query: str, k: int = 5) -> list[Fact]:
-        return []  # 实际召回走 Recaller，engine.query 仅保留接口
-
 
 def create(config: dict[str, Any] | None = None) -> MemoryRuntime:
     from ....config import workspace_path

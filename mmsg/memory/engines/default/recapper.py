@@ -7,8 +7,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from mmsg.common import parse_json
 from mmsg.llm.base import ChatMessage
-from ._utils import parse_json
 
 log = logging.getLogger("mmsg.memory.recapper")
 

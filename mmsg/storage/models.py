@@ -39,9 +39,3 @@ class CuriosityNote:
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-
-@dataclass
-class MemoryState:
-    """长期记忆整合的持久化状态。"""
-    key: str
-    value: str

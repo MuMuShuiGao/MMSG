@@ -7,9 +7,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import sqlite_vec
+try:
+    import sqlite_vec
+except ImportError:
+    raise ImportError(
+        "sqlite-vec 未安装，请运行：pip install sqlite-vec\n"
+        "或重新安装项目：pip install -e ."
+    )
 
-from .models import MemoryState, Message, Session
+from .models import Message, Session
 
 log = logging.getLogger("mmsg.storage")
 
