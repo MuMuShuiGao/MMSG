@@ -33,8 +33,7 @@ async def test():
              r["correct"], r["predicted"], r["gold"], elapsed)
     log.info("raw first 300: %s", r["raw"][:300] if r["raw"] else "EMPTY")
 
-    import shutil
-    shutil.rmtree(base, ignore_errors=True)
+    log.info("workspace 保留在: %s", base)
 
 
 if __name__ == "__main__":

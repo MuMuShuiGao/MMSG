@@ -38,6 +38,8 @@ def parse_args() -> argparse.Namespace:
                    help="并发数 (默认按 tier 预设)")
     p.add_argument("--context-size", choices=["32k", "128k", "1M"], default="32k",
                    help="上下文长度切片 (默认 32k)")
+    p.add_argument("--limit", type=int, default=None,
+                   help="限制样本数量，覆盖 tier 预设 (如 --limit 50)")
     return p.parse_args()
 
 
@@ -51,13 +53,19 @@ async def main() -> None:
 
     logging.basicConfig(level=logging.WARNING)
     log.setLevel(logging.INFO)
+    logging.getLogger("mmsg.eval.runner").setLevel(logging.INFO)
+    logging.getLogger("mmsg.eval.ingest").setLevel(logging.INFO)
 
     log.info("加载数据集 (tier=%s, seed=%d, context=%s)...",
              args.tier, args.seed, args.context_size)
     samples = load_personamem(args.tier, seed=args.seed, context_size=args.context_size)
     log.info("加载完成，共 %d 道题", len(samples))
 
-    llm = OpenAIProvider()
+    if args.limit and args.limit < len(samples):
+        samples = samples[: args.limit]
+        log.info("--limit %d，实际跑 %d 道题", args.limit, len(samples))
+
+    llm = OpenAIProvider(timeout=300.0)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     output_dir = RESULTS_ROOT / f"{timestamp}_{args.tier}"
@@ -95,13 +103,10 @@ async def main() -> None:
     errors = 0
     for i, r in enumerate(all_results_raw):
         if isinstance(r, Exception):
-            log.error("样本 %d 异常: %s", i, r)
+            log.error("样本 %d 异常: %s", i, r, exc_info=r)
             errors += 1
             continue
-        if isinstance(r, list):
-            all_results.extend(r)
-        else:
-            all_results.append(r)
+        all_results.append(r)
 
     elapsed = time.perf_counter() - t_start
 

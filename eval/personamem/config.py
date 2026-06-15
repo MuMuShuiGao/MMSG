@@ -12,7 +12,7 @@ class TierConfig:
 
 
 TIERS: dict[str, TierConfig] = {
-    "smoke": TierConfig(name="smoke", sample_count=100, default_concurrency=4),
-    "standard": TierConfig(name="standard", sample_count=500, default_concurrency=4),
-    "full": TierConfig(name="full", sample_count=2000, default_concurrency=8),
+    "smoke": TierConfig(name="smoke", sample_count=100, default_concurrency=2),
+    "standard": TierConfig(name="standard", sample_count=500, default_concurrency=2),
+    "full": TierConfig(name="full", sample_count=2000, default_concurrency=4),
 }

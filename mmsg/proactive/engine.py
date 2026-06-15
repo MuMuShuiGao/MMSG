@@ -257,7 +257,7 @@ class ProactiveEngine:
             session_id = evt.payload.get("session_id", "")
             count = await self._generate_notes(session_id)
             if count:
-                log.debug("生成 %d 条 curiosity notes", count)
+                log.info("生成 %d 条 curiosity notes (session=%s)", count, session_id[:12])
             self._last_active_at = datetime.now(timezone.utc).isoformat()
         except Exception:
             log.exception("生成 curiosity notes 失败，跳过")
@@ -318,6 +318,7 @@ class ProactiveEngine:
     async def _consolidate(self) -> list[dict[str, Any]]:
         """翻 pending notes，LLM 整理 + 筛选 + 打分。"""
         notes = self._notes.get_pending_notes()
+        log.info("整理检查: pending notes=%d", len(notes))
         if not notes:
             return []
 
@@ -353,8 +354,7 @@ class ProactiveEngine:
         )
         raw = response.message.content or ""
         result = self._parse_json(raw)
-
-        # 回写更新
+        log.info("整理完成: pending_notes=%d 候选 %d 条", len(notes), len(result))
         for item in result:
             item_id = item.get("id")
             updates: dict[str, Any] = {}

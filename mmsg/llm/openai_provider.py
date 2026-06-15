@@ -19,7 +19,7 @@ class OpenAIProvider(LLMProvider):
         model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
-        timeout: float = 60.0,
+        timeout: float = 120.0,
     ) -> None:
         self.model = model or _cfg("model") or self._missing("llm.model")
         self.api_key = api_key or _cfg("api_key") or self._missing("llm.api_key")
