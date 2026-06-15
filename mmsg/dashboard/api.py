@@ -24,6 +24,8 @@ def _build_app(
     memory: DefaultMarkdownLayer,
     proactive_engine: Any = None,
     memory_curator: Any = None,
+    consolidator: Any = None,
+    merger: Any = None,
 ) -> FastAPI:
     app = FastAPI(title="MMSG Dashboard", version="0.1.0")
 
@@ -211,6 +213,23 @@ def _build_app(
         async def get_memory_state() -> dict[str, Any]:
             return memory_curator.get_state()
 
+    # ── Consolidator / Merger 状态 ─────────────────
+
+    @app.get("/api/memory/workers-state")
+    async def get_workers_state() -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if consolidator is not None:
+            try:
+                result["consolidator"] = consolidator.get_state()
+            except Exception:
+                result["consolidator"] = None
+        if merger is not None:
+            try:
+                result["merger"] = merger.get_state()
+            except Exception:
+                result["merger"] = None
+        return result
+
     return app
 
 
@@ -221,6 +240,8 @@ async def start_dashboard(
     port: int = 9876,
     proactive_engine: Any = None,
     memory_curator: Any = None,
+    consolidator: Any = None,
+    merger: Any = None,
 ) -> None:
     try:
         import uvicorn
@@ -241,7 +262,7 @@ async def start_dashboard(
         log.warning("Dashboard requires SqliteStore. Sessions tab disabled.")
         return
 
-    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator)
+    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator, consolidator=consolidator, merger=merger)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     log.info("Dashboard → http://127.0.0.1:%d", port)

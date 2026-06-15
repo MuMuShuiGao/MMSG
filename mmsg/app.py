@@ -8,7 +8,7 @@ import sys
 from .agent import AgentLoop
 from .bus.agent import AgentBus, AgentEvent
 from .bus.messagebus import MessageBus
-from .config import config_exists, feishu as _feishu, init_config, llm as _llm_cfg, log_level, proactive as _proactive, qqbot as _qqbot, workspace_path
+from .config import config_exists, consolidator as _consolidator_cfg, feishu as _feishu, init_config, llm as _llm_cfg, log_level, merger as _merger_cfg, proactive as _proactive, qqbot as _qqbot, workspace_path
 from .core import llm_registry, setup_logging, tool_registry
 from .llm import OpenAIProvider
 from .memory import create_memory
@@ -63,6 +63,7 @@ def _build_agent(
     llm: OpenAIProvider,
     tools: dict,
     memory: object,
+    recaller = None,
 ) -> AgentLoop:
     return AgentLoop(
         agent_bus=agent_bus,
@@ -72,6 +73,7 @@ def _build_agent(
         message_bus=message_bus,
         storage=store,
         system_builder=SystemPromptBuilder(workspace=workspace_path()),
+        recaller=recaller,
     )
 
 
@@ -143,7 +145,21 @@ async def _serve(host: str, port: int) -> None:
     tools = {name: tool_registry.create(name) for name in tool_registry.names()}
     memory = create_memory()
 
-    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory)
+    # Recaller —— 判别器 + hybrid 召回
+    from .memory.recall import Recaller
+
+    recaller = None
+    if memory.embed_provider:
+        try:
+            recaller = Recaller(
+                memory=memory,
+                llm=llm,
+                embedding_provider=memory.embed_provider,
+            )
+        except Exception:
+            log.exception("Recaller 创建失败，召回不可用")
+
+    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory, recaller=recaller)
 
     async def _bridge_observable(evt) -> None:
         if evt.type in _OBSERVABLE_TYPES:
@@ -176,12 +192,41 @@ async def _serve(host: str, port: int) -> None:
     )
     asyncio.create_task(memory_curator.serve())
 
+    # 事实提取 consolidator + 合并 worker（需要向量引擎可用）
+    consolidator = None
+    merger = None
+    if memory.vector_store and memory.embed_provider:
+        from .memory.engines.default.consolidator import Consolidator
+        from .memory.engines.default.merger import Merger
+
+        consolidator = Consolidator(
+            store=store,
+            llm=llm,
+            vector_store=memory.vector_store,
+            embedding_provider=memory.embed_provider,
+            min_new_msg=int(_consolidator_cfg("min_new_msg", 10)),
+            min_hours=int(_consolidator_cfg("min_hours", 2)),
+            poll_interval=int(_consolidator_cfg("poll_interval", 120)),
+        )
+        asyncio.create_task(consolidator.serve())
+
+        merger = Merger(
+            store=store,
+            vector_store=memory.vector_store,
+            embedding_provider=memory.embed_provider,
+            min_days=int(_merger_cfg("min_days", 3)),
+            poll_interval=int(_merger_cfg("poll_interval", 3600)),
+            similarity_threshold=float(_merger_cfg("similarity_threshold", 0.97)),
+        )
+        asyncio.create_task(merger.serve())
+
     channels = await _start_channels(message_bus)
 
     from .dashboard import start_dashboard
     dashboard_task = asyncio.create_task(
         start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876,
-                        proactive_engine=proactive, memory_curator=memory_curator)
+                        proactive_engine=proactive, memory_curator=memory_curator,
+                        consolidator=consolidator, merger=merger)
     )
 
     log.info("服务已启动完成")

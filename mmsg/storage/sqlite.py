@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import sqlite_vec
+
 from .models import MemoryState, Message, Session
+
+log = logging.getLogger("mmsg.storage")
 
 
 class SqliteStore:
@@ -17,7 +22,11 @@ class SqliteStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.enable_load_extension(True)
+        sqlite_vec.load(self._conn)
+        self._conn.enable_load_extension(False)
         self._init_tables()
+        self._run_migrations()
 
     def _init_tables(self) -> None:
         self._conn.executescript("""
@@ -144,6 +153,21 @@ class SqliteStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_user_messages_since(self, since_id: int) -> list[dict[str, Any]]:
+        """consolidator 用：取 id > since_id 的 role='user' 消息。"""
+        rows = self._conn.execute(
+            "SELECT id, content FROM message WHERE id > ? AND role = 'user' ORDER BY id ASC",
+            (since_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_user_messages_since(self, since_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM message WHERE id > ? AND role = 'user'",
+            (since_id,),
+        ).fetchone()
+        return row[0] if row else 0
+
     def delete_session(self, session_id: str) -> None:
         self._conn.execute("DELETE FROM message WHERE session_id = ?", (session_id,))
         self._conn.execute("DELETE FROM session WHERE id = ?", (session_id,))
@@ -192,6 +216,70 @@ class SqliteStore:
 
     def close(self) -> None:
         self._conn.close()
+
+    # ---- schema migrations ----
+
+    _MIGRATIONS: list[str] = [
+        # v1: fact / vec_fact / fts_fact tables
+        """
+CREATE TABLE IF NOT EXISTS fact (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  content TEXT NOT NULL,
+  source_message_ids TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  mention_count INTEGER NOT NULL DEFAULT 1,
+  last_mentioned_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fact_created_at ON fact(created_at DESC);
+
+-- Try virtual tables; they are idempotent via IF NOT EXISTS-like behavior
+-- sqlite-vec vec0: won't error if exists, but we guard with a schema_version check
+""",
+    ]
+
+    _MIGRATION_VEC: str = """
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_fact USING vec0(
+  fact_id INTEGER PRIMARY KEY,
+  embedding FLOAT[1024]
+);
+"""
+
+    _MIGRATION_FTS: str = """
+CREATE VIRTUAL TABLE IF NOT EXISTS fts_fact USING fts5(
+  content,
+  tokenize='unicode61'
+);
+"""
+
+    def _run_migrations(self) -> None:
+        cur_ver = self._schema_version
+        if cur_ver < 1:
+            self._conn.executescript(self._MIGRATIONS[0])
+            try:
+                self._conn.executescript(self._MIGRATION_VEC)
+            except Exception:
+                log.warning("vec_fact 虚表创建失败（可能已存在），跳过")
+            try:
+                self._conn.executescript(self._MIGRATION_FTS)
+            except Exception:
+                log.warning("fts_fact 虚表创建失败（可能已存在），跳过")
+            self._schema_version = 1
+        self._conn.commit()
+
+    @property
+    def _schema_version(self) -> int:
+        r = self._conn.execute(
+            "SELECT value FROM memory_state WHERE key = 'schema_version'"
+        ).fetchone()
+        return int(r["value"]) if r else 0
+
+    @_schema_version.setter
+    def _schema_version(self, val: int) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO memory_state (key, value) VALUES ('schema_version', ?)",
+            (str(val),),
+        )
 
     # ---- memory_state ----
 

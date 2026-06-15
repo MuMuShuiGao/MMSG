@@ -53,6 +53,25 @@ quiet_start = "00:00"
 quiet_end = "07:00"
 # 整理间隔（秒），默认 900（15 分钟），调试时可改为 30
 consolidate_interval = 900
+
+[embedding]
+# Embedding API 配置
+api_key = "sk-your-dashscope-key"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "text-embedding-v3"
+dimensions = 1024
+
+[consolidator]
+# 事实提取 consolidator 配置
+min_new_msg = 10
+min_hours = 2
+poll_interval = 120
+
+[merger]
+# 事实合并 worker 配置
+min_days = 3
+poll_interval = 3600
+similarity_threshold = 0.97
 """
 
 
@@ -109,3 +128,15 @@ def log_level(default: str = "INFO") -> str:
 
 def proactive(key: str, default=""):
     return _load().get("proactive", {}).get(key, default)
+
+
+def embedding(key: str, default=None):
+    return _load().get("embedding", {}).get(key, default)
+
+
+def consolidator(key: str, default=None):
+    return _load().get("consolidator", {}).get(key, default)
+
+
+def merger(key: str, default=None):
+    return _load().get("merger", {}).get(key, default)

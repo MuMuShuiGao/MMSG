@@ -14,7 +14,7 @@ from typing import Any
 from ..bus.agent import AgentEvent, AgentBus
 from ..bus.messagebus import MessageBus, SESSION_RESET
 from ..llm.base import ChatMessage, LLMProvider
-from ..memory import Memory, MemoryRecord
+from ..memory import Memory, MemoryRecord, Fact
 from ..tools.base import Tool
 from ..storage.models import Message, TurnRecord
 from ..storage.sqlite import SqliteStore
@@ -37,6 +37,7 @@ class AgentLoop:
         max_steps: int = 8,
         name: str = "agent",
         storage: SqliteStore | None = None,
+        recaller = None,
     ) -> None:
         self.bus = agent_bus
         self.memory = memory
@@ -54,6 +55,7 @@ class AgentLoop:
             max_steps=max_steps,
             name=name,
         )
+        self.reasoner._recaller = recaller
 
     # ── 消息队列消费 ──────────────────────────────
 
@@ -136,7 +138,6 @@ class AgentLoop:
         self._ensure_session(source)
 
         user_record = MemoryRecord(role="user", content=user_input)
-        await self.memory.write(user_record)
         self.reasoner._history.append(ChatMessage(role="user", content=user_input))
         user_tr = TurnRecord(role="user", content=user_input)
 

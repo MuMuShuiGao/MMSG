@@ -1,7 +1,7 @@
 """LLMContext：每次 LLM 调用前的上下文组装与窗口管理。
 
 属于推理阶段（inference-time）的 prompt 工程：
-- 将 system_prompt、长期记忆、近期摘要、对话历史拼成 messages 列表
+- 将 system_prompt、长期记忆、近期摘要、召回 facts、对话历史拼成 messages 列表
 - 经滑动窗口 + 摘要压缩控制 token 用量后直接喂给 LLM
 
 依赖 memory 层，与具体 agent 运行时绑定。
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from ..llm.base import ChatMessage
 from ..memory.record import MemoryRecord
+from ..memory.fact import Fact
 from ..prompt.segments import SystemPromptBuilder
 
 if TYPE_CHECKING:
@@ -53,7 +54,11 @@ class LLMContext:
     def reset_summary_state(self) -> None:
         self._last_summarized_turn = 0
 
-    async def build(self, history: list[ChatMessage]) -> list[ChatMessage]:
+    async def build(
+        self,
+        history: list[ChatMessage],
+        facts: list[Fact] | None = None,
+    ) -> list[ChatMessage]:
         """组装完整 messages 列表，每次 LLM 调用前由 Reasoner 调用。"""
         msgs: list[ChatMessage] = []
 
@@ -65,6 +70,12 @@ class LLMContext:
         memory_ctx = self._memory.build_context_block()
         if memory_ctx:
             msgs.append(ChatMessage(role="system", content=memory_ctx))
+
+        # 召回 facts
+        if facts:
+            recall_block = _format_recall_block(facts)
+            if recall_block:
+                msgs.append(ChatMessage(role="system", content=recall_block))
 
         msgs.extend(history)
 
@@ -126,3 +137,14 @@ class LLMContext:
                 if count >= limit_turns:
                     return i
         return 0
+
+
+def _format_recall_block(facts: list[Fact]) -> str | None:
+    """将召回的 facts 格式化为 system message。"""
+    if not facts:
+        return None
+    lines = ["# 与本次问题相关的历史记忆\n"]
+    for f in facts:
+        ts = f.created_at[:10] if f.created_at else "?"
+        lines.append(f"- {f.content} [{ts}]")
+    return "\n".join(lines)

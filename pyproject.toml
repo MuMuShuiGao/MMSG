@@ -5,7 +5,9 @@ description = "Personal agent orchestration: bus + observability + layered memor
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27",
+    "jieba>=0.42",
     "pydantic>=2.6",
+    "sqlite-vec>=0.1",
     "textual>=0.80",
 ]
 

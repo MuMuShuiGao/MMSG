@@ -373,11 +373,28 @@ function MemoryView() {
   const [context, setContext] = useState("");
   const [knowledgeDirty, setKnowledgeDirty] = useState(false);
   const [contextDirty, setContextDirty] = useState(false);
+  const [curatorState, setCuratorState] = useState(null);
+  const [workersState, setWorkersState] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    api("/api/memory/knowledge").then(d => setKnowledge(d.content)).catch(()=>{});
-    api("/api/memory/context").then(d => setContext(d.content)).catch(()=>{});
-  }, []);
+  const loadAll = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [k, c, cur, wrk] = await Promise.all([
+        api("/api/memory/knowledge").catch(() => ({content:""})),
+        api("/api/memory/context").catch(() => ({content:""})),
+        api("/api/memory/state").catch(() => null),
+        api("/api/memory/workers-state").catch(() => null),
+      ]);
+      if (!knowledgeDirty) setKnowledge(k.content);
+      if (!contextDirty) setContext(c.content);
+      setCuratorState(cur);
+      setWorkersState(wrk);
+    } catch(e) {}
+    finally { setRefreshing(false); }
+  }, [knowledgeDirty, contextDirty]);
+
+  useEffect(() => { loadAll(); }, []);
 
   const saveKnowledge = async () => {
     await api("/api/memory/knowledge", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({content: knowledge}) });
@@ -395,33 +412,74 @@ function MemoryView() {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveFn(); }
   };
 
-  return (
-    <div className="memory-panel">
-      <div className="memory-col">
-        <h3>
-          📚 长期记忆 / memory.md
-          <button onClick={saveKnowledge} disabled={!knowledgeDirty} style={knowledgeDirty ? {} : {opacity:.5}}>保存</button>
-        </h3>
-        <textarea
-          value={knowledge}
-          onChange={e => { setKnowledge(e.target.value); setKnowledgeDirty(true); }}
-          onKeyDown={handleKeyDown(saveKnowledge, setKnowledgeDirty)}
-          placeholder="暂无长期记忆..."
-          spellCheck={false}
-        />
+  const buildCard = (label, lines) => (
+    <div className="usage-card">
+      <div className="label">{label}</div>
+      <div style={{fontSize:13,lineHeight:1.8,color:"#475569"}}>
+        {lines.map((l,i) => <div key={i}>{l}</div>)}
       </div>
-      <div className="memory-col">
-        <h3>
-          📋 近期摘要 / current_context.md
-          <button onClick={saveContext} disabled={!contextDirty} style={contextDirty ? {} : {opacity:.5}}>保存</button>
-        </h3>
-        <textarea
-          value={context}
-          onChange={e => { setContext(e.target.value); setContextDirty(true); }}
-          onKeyDown={handleKeyDown(saveContext, setContextDirty)}
-          placeholder="暂无近期摘要..."
-          spellCheck={false}
-        />
+    </div>
+  );
+
+  const cur = curatorState || {};
+  const con = (workersState && workersState.consolidator) || {};
+  const mer = (workersState && workersState.merger) || {};
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
+      <div style={{padding:"22px 22px 0 22px",display:"flex",alignItems:"center",gap:12}}>
+        <h3 style={{color:"#1e293b",fontSize:15,fontWeight:700,margin:0}}>后台 Worker 状态</h3>
+        <button
+          disabled={refreshing}
+          onClick={loadAll}
+          style={{padding:"6px 14px",borderRadius:9,border:"none",
+            background: refreshing ? "#94a3b8" : "var(--brand-grad)", color:"#fff",
+            cursor: refreshing ? "wait" : "pointer", fontSize:12, fontWeight:600,
+            transition: "all .2s cubic-bezier(.34,1.4,.64,1)"}}
+        >{refreshing ? "刷新中..." : "刷新"}</button>
+      </div>
+      <div className="usage-cards" style={{padding:"12px 22px 0 22px"}}>
+        {buildCard("🧠 长期策展", [
+          `最后处理 ID: ${cur.last_curated_id ?? "—"}`,
+          `重试次数: ${cur.retry_count ?? 0}`,
+          `上次运行: ${cur.last_run_at ? fmtTs(cur.last_run_at) : "—"}`,
+        ])}
+        {buildCard("📝 事实提取", [
+          `最后处理 ID: ${con.last_consolidated_id ?? "—"}`,
+          `重试次数: ${con.retry_count ?? 0}`,
+          `上次运行: ${con.last_run_at ? fmtTs(con.last_run_at) : "—"}`,
+        ])}
+        {buildCard("🔗 事实合并", [
+          `上次运行: ${mer.last_merge_at ? fmtTs(mer.last_merge_at) : "—"}`,
+        ])}
+      </div>
+      <div className="memory-panel" style={{flex:1}}>
+        <div className="memory-col">
+          <h3>
+            📚 长期记忆 / memory.md
+            <button onClick={saveKnowledge} disabled={!knowledgeDirty} style={knowledgeDirty ? {} : {opacity:.5}}>保存</button>
+          </h3>
+          <textarea
+            value={knowledge}
+            onChange={e => { setKnowledge(e.target.value); setKnowledgeDirty(true); }}
+            onKeyDown={handleKeyDown(saveKnowledge, setKnowledgeDirty)}
+            placeholder="暂无长期记忆..."
+            spellCheck={false}
+          />
+        </div>
+        <div className="memory-col">
+          <h3>
+            📋 近期摘要 / current_context.md
+            <button onClick={saveContext} disabled={!contextDirty} style={contextDirty ? {} : {opacity:.5}}>保存</button>
+          </h3>
+          <textarea
+            value={context}
+            onChange={e => { setContext(e.target.value); setContextDirty(true); }}
+            onKeyDown={handleKeyDown(saveContext, setContextDirty)}
+            placeholder="暂无近期摘要..."
+            spellCheck={false}
+          />
+        </div>
       </div>
     </div>
   );

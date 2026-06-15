@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from ...bus.agent import AgentEvent, AgentBus
 from ...llm.base import ChatMessage, LLMProvider, ToolCall
-from ...memory import Memory, MemoryRecord
+from ...memory import Memory, MemoryRecord, Fact
 from ...storage.models import TurnRecord
 from ...tools.base import Tool
 from ...prompt.segments import SystemPromptBuilder
@@ -80,12 +80,13 @@ class Reasoner:
             llm_input_turns=llm_input_turns,
             summarize_every=summarize_every,
         )
+        self._recaller = None  # 由 AgentLoop 设置
 
     async def think(self) -> AsyncGenerator[ThinkingResult, None]:
         """执行完整 ReAct 循环，每个 step 完成后 yield 一个 ThinkingResult。
 
         done=False：中间 step；done=True：最终结果，包含完整 records。
-        从 memory 读上下文，多步推理 + 工具调用，中间结果写回 memory。
+        进入循环前调一次 Recaller（判别 + hybrid 召回），多 step 共享同一份 facts。
         """
         records: list[TurnRecord] = []
         tool_schemas = [t.schema() for t in self.tools.values()] or None
@@ -93,8 +94,23 @@ class Reasoner:
         total_usage: dict[str, Any] = {}
         step = 0
 
+        # 获取最后一条 user message 用于召回
+        user_msg = ""
+        for m in reversed(self._history):
+            if m.role == "user":
+                user_msg = m.content or ""
+                break
+
+        # 召回 facts（一次，多 step 共享）
+        recall_facts: list[Fact] = []
+        if self._recaller and user_msg:
+            try:
+                recall_facts = await self._recaller.recall_for_turn(user_msg)
+            except Exception:
+                log.exception("召回失败，降级为空")
+
         for step in range(1, self.max_steps + 1):
-            msgs = await self.context.build(self._history)
+            msgs = await self.context.build(self._history, recall_facts)
 
             result = await self._reason_step(msgs, tool_schemas, step)
             total_usage = result.usage or total_usage
@@ -103,13 +119,6 @@ class Reasoner:
             usage_meta = {"tool_calls": tc_dumps}
             if result.usage:
                 usage_meta["usage"] = result.usage
-            await self.memory.write(
-                MemoryRecord(
-                    role="assistant",
-                    content=result.content or "",
-                    meta=usage_meta,
-                )
-            )
             self._history.append(
                 ChatMessage(
                     role="assistant",
@@ -157,13 +166,6 @@ class Reasoner:
                         log.exception("工具 %s 执行失败", tc.name)
                         tool_result = f"错误: 工具 '{tc.name}' 执行异常"
 
-                await self.memory.write(
-                    MemoryRecord(
-                        role="tool",
-                        content=str(tool_result),
-                        meta={"tool_call_id": tc.id, "name": tc.name},
-                    )
-                )
                 self._history.append(
                     ChatMessage(
                         role="tool",
@@ -250,11 +252,10 @@ class Reasoner:
         )
 
         collected_content = resp_evt.payload.get("content", collected_content)
-        collected_tool_calls_raw = resp_evt.payload.get("tool_calls", [])
+        collected_tool_calls_raw: list[dict[str, Any]] = resp_evt.payload.get("tool_calls", [])
+        raw_ids = {tc.get("id") for tc in collected_tool_calls_raw if isinstance(tc, dict)}
         collected_tool_calls = [
-            tc
-            for tc in collected_tool_calls
-            if tc.model_dump() in collected_tool_calls_raw
+            tc for tc in collected_tool_calls if tc.id in raw_ids
         ]
 
         return ReasoningResult(

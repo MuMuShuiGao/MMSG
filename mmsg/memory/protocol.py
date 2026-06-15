@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from .fact import Fact
 from .record import MemoryRecord
 
 
@@ -40,21 +41,20 @@ class MarkdownMemoryLayer(ABC):
 # ── 向量引擎层 ───────────────────────────────────────────────
 
 class MemoryEngine(ABC):
-    """向量库 + SQLite，语义检索，按需召回。"""
+    """向量库 + FTS5，语义 + 关键词检索，按需召回。"""
+
+    vector_store: Any = None       # VectorStore，子类须设置
+    embed_provider: Any = None     # EmbeddingProvider，子类须设置
 
     @abstractmethod
-    async def ingest(self, record: MemoryRecord) -> None:
-        """写入一条记录到向量库。"""
+    async def ingest_fact(self, fact: Fact) -> int:
+        """写入一条 fact 到向量库，返回 fact_id。"""
         ...
 
     @abstractmethod
-    async def query(self, query: str, k: int = 8) -> list[MemoryRecord]:
-        """语义检索，返回 top-k 相关记录。"""
+    async def query(self, query: str, k: int = 5) -> list[Fact]:
+        """语义检索，返回 top-k 相关 facts。"""
         ...
-
-    async def mutate(self, record_id: str, updates: dict) -> None:
-        """修改/删除记录 — 可选实现。"""
-        pass
 
 
 # ── 组合层 MemoryRuntime ─────────────────────────────────────
@@ -73,16 +73,25 @@ class MemoryRuntime:
         self.markdown = markdown
         self.engine = engine
 
-    async def write(self, record: MemoryRecord) -> None:
-        """写入一条对话记录到向量引擎（如有）。"""
+    async def ingest_fact(self, fact: Fact) -> int:
+        """写入一条 fact 到向量引擎，返回 fact_id。无引擎则返回 -1。"""
         if self.engine:
-            await self.engine.ingest(record)
+            return await self.engine.ingest_fact(fact)
+        return -1
 
-    async def recall(self, query: str, k: int = 8) -> list[MemoryRecord]:
+    async def recall(self, query: str, k: int = 5) -> list[Fact]:
         """语义召回 — 仅走向量引擎。无引擎或空 query 返回空列表。"""
         if self.engine and query:
             return await self.engine.query(query, k)
         return []
+
+    @property
+    def vector_store(self):
+        return self.engine.vector_store if self.engine else None
+
+    @property
+    def embed_provider(self):
+        return self.engine.embed_provider if self.engine else None
 
     async def summarize(self, messages: list[MemoryRecord]) -> None:
         """摘要压缩 — 委托给 markdown 层的 consolidate。"""
