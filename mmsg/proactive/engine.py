@@ -278,9 +278,14 @@ class ProactiveEngine:
                 lines.append(f"{role_label}: {content}")
         conversation = "\n".join(lines)
 
+        ctx_block = self._memory.build_context_block()
+        system_msg = ChatMessage(
+            role="system",
+            content=CURIOSITY_PROMPT if not ctx_block else f"{CURIOSITY_PROMPT}\n\n# 用户背景\n\n{ctx_block}",
+        )
         response = await self._llm.chat(
             messages=[
-                ChatMessage(role="system", content=CURIOSITY_PROMPT),
+                system_msg,
                 ChatMessage(role="user", content=conversation),
             ],
         )
@@ -334,14 +339,11 @@ class ProactiveEngine:
         )
 
         # 注入 memory 上下文
-        memory_ctx = self._memory.markdown.get_memory_context()
-        recent_ctx = self._memory.markdown.read_recent_context()
+        memory_ctx = self._memory.build_context_block()
 
         system_parts = [CONSOLIDATE_PROMPT]
         if memory_ctx:
-            system_parts.append(f"\n# 长期记忆\n\n{memory_ctx}")
-        if recent_ctx:
-            system_parts.append(f"\n{recent_ctx}")
+            system_parts.append(memory_ctx)
 
         response = await self._llm.chat(
             messages=[
@@ -396,8 +398,10 @@ class ProactiveEngine:
 
     async def _generate_light(self, note_content: str) -> str:
         """轻量：直接基于 note 生成推送消息。"""
-        # 用 replace 而非 format，避免 note 内容中的花括号导致 KeyError
+        ctx_block = self._memory.build_context_block()
         prompt = PUSH_GENERATION_PROMPT.replace("{note_content}", note_content)
+        if ctx_block:
+            prompt = f"{prompt}\n\n# 用户背景\n\n{ctx_block}"
         response = await self._llm.chat(
             messages=[
                 ChatMessage(role="system", content=prompt),

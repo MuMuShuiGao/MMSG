@@ -46,3 +46,10 @@ class CuriosityNote:
     merged_from: str | None = None                      # JSON array: 合并来源 note id 列表
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+@dataclass
+class MemoryState:
+    """长期记忆整合的持久化状态。"""
+    key: str
+    value: str

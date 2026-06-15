@@ -23,6 +23,7 @@ def _build_app(
     store: SqliteStore,
     memory: DefaultMarkdownLayer,
     proactive_engine: Any = None,
+    memory_curator: Any = None,
 ) -> FastAPI:
     app = FastAPI(title="MMSG Dashboard", version="0.1.0")
 
@@ -192,6 +193,24 @@ def _build_app(
                 log.exception("[Dashboard] execute_push failed")
                 raise HTTPException(status_code=500, detail=str(e))
 
+    # ── Memory Curator ──────────────────────────
+
+    if memory_curator is not None:
+
+        @app.post("/api/memory/curate")
+        async def trigger_memory_curate() -> dict[str, Any]:
+            log.info("[Dashboard] trigger_memory_curate")
+            try:
+                result = await memory_curator.trigger_curate()
+                return result
+            except Exception as e:
+                log.exception("[Dashboard] trigger_memory_curate failed")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/api/memory/state")
+        async def get_memory_state() -> dict[str, Any]:
+            return memory_curator.get_state()
+
     return app
 
 
@@ -201,6 +220,7 @@ async def start_dashboard(
     host: str = "127.0.0.1",
     port: int = 9876,
     proactive_engine: Any = None,
+    memory_curator: Any = None,
 ) -> None:
     try:
         import uvicorn
@@ -221,7 +241,7 @@ async def start_dashboard(
         log.warning("Dashboard requires SqliteStore. Sessions tab disabled.")
         return
 
-    app = _build_app(store, markdown, proactive_engine=proactive_engine)
+    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     log.info("Dashboard → http://127.0.0.1:%d", port)

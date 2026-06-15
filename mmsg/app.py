@@ -167,11 +167,21 @@ async def _serve(host: str, port: int) -> None:
         )
         asyncio.create_task(proactive.serve())
 
+    # 长期记忆策展 worker
+    from .memory.engines.default.curator import MemoryCurator
+    memory_curator = MemoryCurator(
+        store=store,
+        llm=llm,
+        markdown=memory.markdown,
+    )
+    asyncio.create_task(memory_curator.serve())
+
     channels = await _start_channels(message_bus)
 
     from .dashboard import start_dashboard
     dashboard_task = asyncio.create_task(
-        start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876, proactive_engine=proactive)
+        start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876,
+                        proactive_engine=proactive, memory_curator=memory_curator)
     )
 
     log.info("服务已启动完成")

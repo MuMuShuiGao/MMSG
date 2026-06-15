@@ -1,15 +1,11 @@
-"""default 记忆 — Markdown 文件 I/O 层实现。
+"""default 记忆 — Markdown 文件 I/O 层 + 工厂。
 
-实现 MarkdownMemoryLayer 协议：
-- memory.md → 长期记忆
-- current_context.md → 近期摘要
-- consolidate() → LLM 压缩对话写入近期摘要
+- memory.md → 长期知识
+- current_context.md → 近期上下文
+- consolidate() → 委托 RecentRecapper 压缩对话为摘要
 """
 from __future__ import annotations
 
-import json
-import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +13,6 @@ from ...protocol import MarkdownMemoryLayer, MemoryRuntime
 from ...record import MemoryRecord
 from .current_context import ContextWindow
 from .memory import KnowledgeBase
-
-log = logging.getLogger("mmsg.memory.default")
 
 
 class DefaultMarkdownLayer(MarkdownMemoryLayer):
@@ -39,52 +33,9 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
         self.knowledge.write(content)
 
     async def consolidate(self, messages: list[MemoryRecord]) -> None:
-        """将一段对话记录压缩为摘要，写入 current_context.md 近期摘要。"""
-        try:
-            from ....llm.base import ChatMessage
-            from ....core import llm_registry
-            llm = llm_registry.create("openai")
-        except Exception:
-            log.exception("无法创建 LLM 实例用于摘要")
-            return
-
-        turns_text = "\n---\n".join(
-            f"{m.role}: {m.content or ''}" for m in messages if m.role in ("user", "assistant")
-        )
-        prompt = (
-            "根据以下多轮对话，返回一个 JSON 对象，包含 5 个字段（每字段不超过40字，无则填\"无\"）：\n"
-            '{\n'
-            '  "持续关注": "...",\n'
-            '  "明确偏好": "...",\n'
-            '  "待延续话题": "...",\n'
-            '  "避免事项": "...",\n'
-            '  "前置背景": "..."\n'
-            '}\n'
-            f"\n对话内容：\n{turns_text}"
-        )
-        msgs = [ChatMessage(role="user", content=prompt)]
-        try:
-            resp = await llm.chat(msgs)
-            raw = resp.message.content.strip() or ""
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[-1]
-                if raw.endswith("```"):
-                    raw = raw.rsplit("\n", 1)[0]
-            data = json.loads(raw)
-            lines = [
-                f"- 最近持续关注：{data.get('持续关注', '无')}",
-                f"- 最近明确偏好：{data.get('明确偏好', '无')}",
-                f"- 最近待延续话题：{data.get('待延续话题', '无')}",
-                f"- 最近避免事项：{data.get('避免事项', '无')}",
-                f"- 会话前置背景：{data.get('前置背景', '无')}",
-            ]
-            summary = "\n".join(lines)
-
-            ts = datetime.now(timezone.utc).strftime("%m-%d %H:%M")
-            entry = f"### [{ts}]\n{summary}\n"
-            self.context.write(f"# 近期摘要\n{entry}")
-        except Exception:
-            log.exception("摘要生成失败")
+        """短期摘要：委托 RecentRecapper 压缩对话 → current_context.md。"""
+        from .recapper import RecentRecapper
+        await RecentRecapper(self.context).recape(messages)
 
 
 def create(config: dict[str, Any] | None = None) -> MemoryRuntime:

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .models import Message, Session
+from .models import MemoryState, Message, Session
 
 
 class SqliteStore:
@@ -61,6 +61,11 @@ class SqliteStore:
 
             CREATE INDEX IF NOT EXISTS idx_note_status
                 ON curiosity_note(status, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS memory_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            );
         """)
         self._conn.commit()
 
@@ -187,3 +192,18 @@ class SqliteStore:
 
     def close(self) -> None:
         self._conn.close()
+
+    # ---- memory_state ----
+
+    def get_memory_state(self, key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM memory_state WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_memory_state(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO memory_state (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        self._conn.commit()

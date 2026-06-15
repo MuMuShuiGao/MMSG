@@ -62,13 +62,9 @@ class LLMContext:
             if rendered:
                 msgs.append(ChatMessage(role="system", content=rendered))
 
-        memory_ctx = self._memory.markdown.get_memory_context()
+        memory_ctx = self._memory.build_context_block()
         if memory_ctx:
-            msgs.append(ChatMessage(role="system", content=f"# 长期记忆\n\n{memory_ctx}"))
-
-        recent_ctx = self._memory.markdown.read_recent_context()
-        if recent_ctx:
-            msgs.append(ChatMessage(role="system", content=recent_ctx))
+            msgs.append(ChatMessage(role="system", content=memory_ctx))
 
         msgs.extend(history)
 
