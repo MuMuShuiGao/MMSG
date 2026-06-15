@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from ...protocol import MarkdownMemoryLayer, MemoryEngine, MemoryRuntime
-from ...record import MemoryRecord
 from ...fact import Fact
 from .current_context import ContextWindow
 from .memory import KnowledgeBase
@@ -34,7 +33,7 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
     def write_memory(self, content: str) -> None:
         self.knowledge.write(content)
 
-    async def consolidate(self, messages: list[MemoryRecord]) -> None:
+    async def consolidate(self, messages: list) -> None:
         """短期摘要：委托 RecentRecapper 压缩对话 → current_context.md。"""
         from .recapper import RecentRecapper
         await RecentRecapper(self.context).recape(messages)

@@ -516,7 +516,7 @@ class ProactiveEngine:
         raw = raw.strip()
         if raw.startswith("```"):
             lines = raw.split("\n")
-            lines = [l for l in lines if not l.startswith("```")]
+            lines = [line for line in lines if not line.startswith("```")]
             raw = "\n".join(lines).strip()
         try:
             data = json.loads(raw)

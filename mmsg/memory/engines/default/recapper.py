@@ -8,7 +8,6 @@ import logging
 from datetime import datetime, timezone
 
 from mmsg.llm.base import ChatMessage
-from mmsg.memory.record import MemoryRecord
 from ._utils import parse_json
 
 log = logging.getLogger("mmsg.memory.recapper")
@@ -23,7 +22,7 @@ class RecentRecapper:
     def __init__(self, context_window) -> None:
         self._context = context_window  # ContextWindow 实例
 
-    async def recape(self, messages: list[MemoryRecord]) -> None:
+    async def recape(self, messages: list[ChatMessage]) -> None:
         """将一段对话记录压缩为摘要，写入 current_context.md。"""
         try:
             from mmsg.core import llm_registry

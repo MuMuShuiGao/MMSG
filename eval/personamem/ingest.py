@@ -9,7 +9,8 @@ import logging
 from pathlib import Path
 
 from mmsg.llm import OpenAIProvider
-from mmsg.memory import MemoryRecord, MemoryRuntime
+from mmsg.llm.base import ChatMessage
+from mmsg.memory import MemoryRuntime
 from mmsg.memory.engines.default.curator import MemoryCurator
 from mmsg.memory.engines.default.engine import DefaultMarkdownLayer
 from mmsg.storage.models import Message
@@ -48,7 +49,7 @@ async def ingest_history(
 
     log.info("开始逐步回放 %d 轮 user 原话 (总 %d 轮)", total_users, len(turns))
 
-    pending_consolidate: list[MemoryRecord] = []
+    pending_consolidate: list[ChatMessage] = []
     pending_curator: int = 0
     every_user_count = 0
 
@@ -60,7 +61,7 @@ async def ingest_history(
 
         # 写入 SQLite（curator 通过 watermark 只取增量）
         store.save_message(Message(session_id=session_id, role=role, content=content))
-        pending_consolidate.append(MemoryRecord(role=role, content=content))
+        pending_consolidate.append(ChatMessage(role=role, content=content))
 
         if role == "user":
             pending_curator += 1

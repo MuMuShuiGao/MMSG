@@ -159,7 +159,9 @@ class MemoryCurator:
         if last_run:
             try:
                 last_dt = datetime.fromisoformat(last_run)
-                hours_since = (datetime.now(timezone.utc) - last_dt.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                hours_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
             except (TypeError, ValueError):
                 hours_since = 999
             return hours_since >= self._min_hours
@@ -168,21 +170,13 @@ class MemoryCurator:
 
     def _count_new_user_messages(self) -> int:
         watermark = self._last_curated_id
-        row = self._store._conn.execute(
-            "SELECT COUNT(*) FROM message WHERE id > ? AND role = 'user'",
-            (watermark,),
-        ).fetchone()
-        return row[0] if row else 0
+        return self._store.count_user_messages_since(watermark)
 
     # ── 策展逻辑 ───────────────────────────────────
 
     async def _curate(self) -> None:
         watermark = self._last_curated_id
-
-        rows = self._store._conn.execute(
-            "SELECT id, content FROM message WHERE id > ? AND role = 'user' ORDER BY id ASC",
-            (watermark,),
-        ).fetchall()
+        rows = self._store.get_user_messages_since(watermark)
 
         if not rows:
             return

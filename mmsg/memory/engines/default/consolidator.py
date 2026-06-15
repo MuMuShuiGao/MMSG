@@ -137,7 +137,9 @@ class Consolidator:
         if last_run:
             try:
                 last_dt = datetime.fromisoformat(last_run)
-                hours_since = (datetime.now(timezone.utc) - last_dt.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                hours_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
             except (TypeError, ValueError):
                 hours_since = 999
             return hours_since >= self._min_hours

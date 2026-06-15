@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
@@ -13,10 +14,10 @@ from typing import Any
 
 from ..bus.agent import AgentEvent, AgentBus
 from ..bus.messagebus import MessageBus, SESSION_RESET
-from ..llm.base import ChatMessage, LLMProvider
-from ..memory import Memory, MemoryRecord, Fact
+from ..llm.base import ChatMessage, LLMProvider, ToolCall
+from ..memory import Memory
 from ..tools.base import Tool
-from ..storage.models import Message, TurnRecord
+from ..storage.models import Message
 from ..storage.sqlite import SqliteStore
 from ..prompt.segments import SystemPromptBuilder
 from .reason import Reasoner
@@ -91,9 +92,8 @@ class AgentLoop:
         for row in rows:
             meta = row.get("meta") or {}
             if isinstance(meta, str):
-                import json as _json
                 try:
-                    meta = _json.loads(meta)
+                    meta = json.loads(meta)
                 except Exception:
                     meta = {}
             msg = ChatMessage(role=row["role"], content=row.get("content") or "")
@@ -102,7 +102,6 @@ class AgentLoop:
                 msg.name = meta.get("name")
             elif row["role"] == "assistant":
                 tcs_raw = meta.get("tool_calls") or []
-                from ..llm.base import ToolCall
                 msg.tool_calls = [ToolCall(**tc) for tc in tcs_raw]
             self.reasoner._history.append(msg)
         log.info("恢复会话 %s (source=%s)，%d 条历史", sid, source, len(rows))
@@ -137,15 +136,14 @@ class AgentLoop:
         self._current_source = source
         self._ensure_session(source)
 
-        user_record = MemoryRecord(role="user", content=user_input)
-        self.reasoner._history.append(ChatMessage(role="user", content=user_input))
-        user_tr = TurnRecord(role="user", content=user_input)
+        user_msg = ChatMessage(role="user", content=user_input)
+        self.reasoner._history.append(user_msg)
 
         await self.bus.observe(AgentEvent.BeforeTurn, self.name, {})
 
         async for chunk in self.reasoner.think():
             if chunk.done:
-                await self._persist_turn([user_tr] + chunk.records)
+                await self._persist_turn([user_msg] + chunk.records)
                 await self.bus.observe(
                     AgentEvent.AfterTurn, self.name, {
                         "final": chunk.content,
@@ -157,7 +155,7 @@ class AgentLoop:
 
     # ── 持久化 ────────────────────────────────────
 
-    async def _persist_turn(self, records: list[TurnRecord]) -> None:
+    async def _persist_turn(self, records: list[ChatMessage]) -> None:
         if not self.storage or not self._sessions.get(self._current_source):
             return
         for rec in records:

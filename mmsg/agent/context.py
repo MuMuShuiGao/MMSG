@@ -14,7 +14,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..llm.base import ChatMessage
-from ..memory.record import MemoryRecord
 from ..memory.fact import Fact
 from ..prompt.segments import SystemPromptBuilder
 
@@ -105,7 +104,7 @@ class LLMContext:
             if not seg:
                 break
             seg_records = [
-                MemoryRecord(role=m.role, content=m.content or "", meta={})
+                ChatMessage(role=m.role, content=m.content or "")
                 for m in seg
             ]
             self._schedule_consolidate(seg_records)
@@ -118,10 +117,10 @@ class LLMContext:
         feed_from = self._find_cut_index(cached, self.llm_input_turns)
         return system_msgs + cached[feed_from:]
 
-    def _schedule_consolidate(self, seg_records: list[MemoryRecord]) -> None:
+    def _schedule_consolidate(self, seg_records: list[ChatMessage]) -> None:
         asyncio.create_task(self._do_consolidate(seg_records))
 
-    async def _do_consolidate(self, seg_records: list[MemoryRecord]) -> None:
+    async def _do_consolidate(self, seg_records: list[ChatMessage]) -> None:
         try:
             await self._memory.summarize(seg_records)
         except Exception:

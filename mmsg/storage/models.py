@@ -25,14 +25,6 @@ class Message:
 
 
 @dataclass
-class TurnRecord:
-    """一轮对话中的单条记录，用于落库前收集。"""
-    role: str
-    content: str = ""
-    meta: dict = field(default_factory=dict)
-
-
-@dataclass
 class CuriosityNote:
     """主动引擎的好奇心笔记。"""
     content: str

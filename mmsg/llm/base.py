@@ -26,6 +26,7 @@ class ChatMessage(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tool_call_id: str | None = None  # for role=tool
     name: str | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMResponse(BaseModel):

@@ -15,8 +15,7 @@ from pydantic import BaseModel, Field
 
 from ...bus.agent import AgentEvent, AgentBus
 from ...llm.base import ChatMessage, LLMProvider, ToolCall
-from ...memory import Memory, MemoryRecord, Fact
-from ...storage.models import TurnRecord
+from ...memory import Memory
 from ...tools.base import Tool
 from ...prompt.segments import SystemPromptBuilder
 from ..context import LLMContext
@@ -36,7 +35,7 @@ class ReasoningResult(BaseModel):
 class ThinkingResult(BaseModel):
     """完整 ReAct 循环结果。done=False 表示中间 step，done=True 表示最终结果。"""
     content: str = ""
-    records: list[TurnRecord] = Field(default_factory=list)
+    records: list[ChatMessage] = Field(default_factory=list)
     steps: int = 0
     usage: dict[str, Any] = Field(default_factory=dict)
     done: bool = False
@@ -88,7 +87,7 @@ class Reasoner:
         done=False：中间 step；done=True：最终结果，包含完整 records。
         进入循环前调一次 Recaller（判别 + hybrid 召回），多 step 共享同一份 facts。
         """
-        records: list[TurnRecord] = []
+        records: list[ChatMessage] = []
         tool_schemas = [t.schema() for t in self.tools.values()] or None
         final_text = ""
         total_usage: dict[str, Any] = {}
@@ -127,9 +126,10 @@ class Reasoner:
                 )
             )
             records.append(
-                TurnRecord(
+                ChatMessage(
                     role="assistant",
                     content=result.content or "",
+                    tool_calls=result.tool_calls,
                     meta=usage_meta,
                 )
             )
@@ -175,9 +175,11 @@ class Reasoner:
                     )
                 )
                 records.append(
-                    TurnRecord(
+                    ChatMessage(
                         role="tool",
                         content=str(tool_result),
+                        tool_call_id=tc.id,
+                        name=tc.name,
                         meta={"tool_call_id": tc.id, "name": tc.name},
                     )
                 )

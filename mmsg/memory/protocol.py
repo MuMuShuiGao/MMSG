@@ -7,9 +7,12 @@ MemoryRuntime: 组合层，上游唯一依赖
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
 from .fact import Fact
-from .record import MemoryRecord
+
+if TYPE_CHECKING:
+    from ..llm.base import ChatMessage
 
 
 # ── Markdown 文件 I/O 层 ─────────────────────────────────────
@@ -33,7 +36,7 @@ class MarkdownMemoryLayer(ABC):
         ...
 
     @abstractmethod
-    async def consolidate(self, messages: list[MemoryRecord]) -> None:
+    async def consolidate(self, messages: list[ChatMessage]) -> None:
         """摘要压缩调度。"""
         ...
 
@@ -93,7 +96,7 @@ class MemoryRuntime:
     def embed_provider(self):
         return self.engine.embed_provider if self.engine else None
 
-    async def summarize(self, messages: list[MemoryRecord]) -> None:
+    async def summarize(self, messages: list[ChatMessage]) -> None:
         """摘要压缩 — 委托给 markdown 层的 consolidate。"""
         await self.markdown.consolidate(messages)
 

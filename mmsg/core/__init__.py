@@ -1,6 +1,6 @@
-from .plugin import llm_registry, tool_registry
-
 import logging
+
+from .plugin import llm_registry, tool_registry
 
 _LEVEL_MAP: dict[str, int] = {
     "DEBUG": logging.DEBUG,
