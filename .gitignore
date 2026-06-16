@@ -25,3 +25,8 @@ eval/results/
 # Bytecode
 *.pyc
 
+# Dashboard vendor JS (download once: npm install react@18 react-dom@18 @babel/standalone)
+mmsg/dashboard/static/react.min.js
+mmsg/dashboard/static/react-dom.min.js
+mmsg/dashboard/static/babel.min.js
+

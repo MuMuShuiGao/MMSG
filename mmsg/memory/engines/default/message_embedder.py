@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from mmsg.common import parse_datetime_utc, hours_elapsed
 from mmsg.memory.engines.default.vector_store import _serialize_embedding
+from mmsg.storage.schema import VEC_MESSAGE
 
 log = logging.getLogger("mmsg.memory.message_embedder")
 
@@ -122,7 +123,7 @@ class MessageEmbedder:
 
         for msg, vec in zip(messages, embeddings):
             self._store._conn.execute(
-                "INSERT INTO vec_message (message_id, embedding) VALUES (?, ?)",
+                f"INSERT INTO {VEC_MESSAGE} (message_id, embedding) VALUES (?, ?)",
                 (msg["id"], _serialize_embedding(vec)),
             )
         self._store._conn.commit()

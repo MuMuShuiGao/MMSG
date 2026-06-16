@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from pathlib import Path
 
 log = logging.getLogger("mmsg.storage")
+
+VEC_ATTACH = "vec"
+VEC_FACT = f"{VEC_ATTACH}.vec_fact"
+FTS_FACT = f"{VEC_ATTACH}.fts_fact"
+VEC_MESSAGE = f"{VEC_ATTACH}.vec_message"
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS session (
@@ -66,20 +72,20 @@ CREATE INDEX IF NOT EXISTS idx_fact_created_at ON fact(created_at DESC);
 """
 
 _VIRTUAL_TABLES: list[tuple[str, str]] = [
-    ("vec_fact", """
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_fact USING vec0(
+    ("vec_fact", f"""
+CREATE VIRTUAL TABLE IF NOT EXISTS {VEC_FACT} USING vec0(
     fact_id   INTEGER PRIMARY KEY,
     embedding FLOAT[1024]
 );
 """),
-    ("fts_fact", """
-CREATE VIRTUAL TABLE IF NOT EXISTS fts_fact USING fts5(
+    ("fts_fact", f"""
+CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_FACT} USING fts5(
     content,
     tokenize='unicode61'
 );
 """),
-    ("vec_message", """
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_message USING vec0(
+    ("vec_message", f"""
+CREATE VIRTUAL TABLE IF NOT EXISTS {VEC_MESSAGE} USING vec0(
     message_id INTEGER PRIMARY KEY,
     embedding  FLOAT[1024]
 );
@@ -87,14 +93,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_message USING vec0(
 ]
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
+def init_schema(conn: sqlite3.Connection, vec_db_path: str | Path) -> None:
+    conn.execute(f"ATTACH DATABASE ? AS {VEC_ATTACH}", (str(vec_db_path),))
     conn.executescript(_DDL)
     for name, ddl in _VIRTUAL_TABLES:
         try:
             conn.executescript(ddl)
         except Exception:
             log.warning("%s 虚表创建跳过（可能已存在）", name)
-    # 兼容已有库：补 topic_key 列（列存在时 SQLite 会报错，忽略即可）
     try:
         conn.execute("ALTER TABLE curiosity_note ADD COLUMN topic_key TEXT NOT NULL DEFAULT ''")
     except Exception:

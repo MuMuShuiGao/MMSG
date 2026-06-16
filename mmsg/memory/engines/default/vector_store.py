@@ -9,12 +9,12 @@ import json
 import logging
 import struct
 from datetime import datetime, timezone
-from typing import Any
 
 import jieba
 import sqlite3
 
 from ...fact import Fact
+from mmsg.storage.schema import VEC_FACT, FTS_FACT
 
 log = logging.getLogger("mmsg.memory.vector_store")
 
@@ -49,14 +49,14 @@ class VectorStore:
 
         if embedding:
             self._conn.execute(
-                "INSERT INTO vec_fact (fact_id, embedding) VALUES (?, ?)",
+                f"INSERT INTO {VEC_FACT} (fact_id, embedding) VALUES (?, ?)",
                 (fact_id, _serialize_embedding(embedding)),
             )
 
         # BM25: jieba 切词后空格拼接，用 rowid 跟 fact 关联
         tokens = " ".join(jieba.cut(fact.content))
         self._conn.execute(
-            "INSERT INTO fts_fact (rowid, content) VALUES (?, ?)",
+            f"INSERT INTO {FTS_FACT} (rowid, content) VALUES (?, ?)",
             (fact_id, tokens),
         )
 
@@ -86,12 +86,12 @@ class VectorStore:
                 fid = cur.lastrowid
                 if embedding:
                     self._conn.execute(
-                        "INSERT INTO vec_fact (fact_id, embedding) VALUES (?, ?)",
+                        f"INSERT INTO {VEC_FACT} (fact_id, embedding) VALUES (?, ?)",
                         (fid, _serialize_embedding(embedding)),
                     )
                 tokens = " ".join(jieba.cut(fact.content))
                 self._conn.execute(
-                    "INSERT INTO fts_fact (rowid, content) VALUES (?, ?)",
+                    f"INSERT INTO {FTS_FACT} (rowid, content) VALUES (?, ?)",
                     (fid, tokens),
                 )
                 ids.append(fid)
@@ -120,17 +120,17 @@ class VectorStore:
         vec_blob = _serialize_embedding(embedding)
 
         rows = self._conn.execute(
-            """
+            f"""
             WITH dense AS (
                 SELECT fact_id AS id, distance
-                FROM vec_fact
+                FROM {VEC_FACT}
                 WHERE embedding MATCH ?
                   AND k = ?
             ),
             sparse AS (
-                SELECT rowid AS id, bm25(fts_fact) AS rank
-                FROM fts_fact
-                WHERE fts_fact MATCH ?
+                SELECT rowid AS id, bm25({FTS_FACT}) AS rank
+                FROM {FTS_FACT}
+                WHERE {FTS_FACT} MATCH ?
                 ORDER BY rank DESC
                 LIMIT ?
             )
@@ -161,9 +161,9 @@ class VectorStore:
         """查找 cos 相似度 > threshold 的候选 fact。返回 (fact, cos_similarity)。"""
         vec_blob = _serialize_embedding(embedding)
         rows = self._conn.execute(
-            """
+            f"""
             SELECT f.*, v.distance
-            FROM vec_fact v
+            FROM {VEC_FACT} v
             JOIN fact f ON f.id = v.fact_id
             WHERE v.embedding MATCH ?
               AND v.distance < ?
@@ -190,8 +190,8 @@ class VectorStore:
                 all_ids.update(af.source_message_ids)
                 survivor.mention_count += af.mention_count
             self._conn.execute("DELETE FROM fact WHERE id = ?", (aid,))
-            self._conn.execute("DELETE FROM vec_fact WHERE fact_id = ?", (aid,))
-            self._conn.execute("DELETE FROM fts_fact WHERE rowid = ?", (aid,))
+            self._conn.execute(f"DELETE FROM {VEC_FACT} WHERE fact_id = ?", (aid,))
+            self._conn.execute(f"DELETE FROM {FTS_FACT} WHERE rowid = ?", (aid,))
         survivor.source_message_ids = list(all_ids)
         survivor.last_mentioned_at = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
@@ -211,7 +211,7 @@ class VectorStore:
 
     def get_fact_embedding(self, fact_id: int) -> list[float] | None:
         row = self._conn.execute(
-            "SELECT embedding FROM vec_fact WHERE fact_id = ?", (fact_id,)
+            f"SELECT embedding FROM {VEC_FACT} WHERE fact_id = ?", (fact_id,)
         ).fetchone()
         return _deserialize_embedding(row[0]) if row else None
 

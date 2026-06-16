@@ -15,6 +15,7 @@ from ..llm.base import ChatMessage, LLMProvider
 from ..common import parse_json, parse_datetime_utc, hours_elapsed, in_quiet_hours
 from ..memory import Memory
 from ..storage.sqlite import SqliteStore
+from ..storage.schema import VEC_MESSAGE
 from ..tools.base import Tool
 from .decision import INTENSITY_HOURS, push_score, should_push
 from .notes import NoteStore
@@ -463,10 +464,10 @@ class ProactiveEngine:
             try:
                 vec_blob = _serialize_embedding(vec)
                 rows = self._store._conn.execute(
-                    """
+                    f"""
                     SELECT COUNT(*) as cnt FROM (
                         SELECT 1
-                        FROM vec_message vm
+                        FROM {VEC_MESSAGE} vm
                         JOIN message m ON m.id = vm.message_id
                         WHERE vm.embedding MATCH ?
                           AND vm.distance < ?
@@ -546,9 +547,9 @@ class ProactiveEngine:
 
         vec_blob = _serialize_embedding(query_vec)
         rows = self._store._conn.execute(
-            """
+            f"""
             SELECT vm.message_id, vm.distance
-            FROM vec_message vm
+            FROM {VEC_MESSAGE} vm
             WHERE vm.embedding MATCH ?
               AND vm.distance < ?
               AND k = ?

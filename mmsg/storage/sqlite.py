@@ -21,6 +21,7 @@ class SqliteStore(SessionMixin, StateMixin, UsageMixin):
     def __init__(self, db_path: str | Path) -> None:
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
+        vec_db_path = db_path.with_suffix(".vec.db")
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -28,7 +29,7 @@ class SqliteStore(SessionMixin, StateMixin, UsageMixin):
         self._conn.enable_load_extension(True)
         sqlite_vec.load(self._conn)
         self._conn.enable_load_extension(False)
-        init_schema(self._conn)
+        init_schema(self._conn, vec_db_path)
 
     def close(self) -> None:
         self._conn.close()
