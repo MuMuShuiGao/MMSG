@@ -17,7 +17,6 @@ from ..bus.messagebus import MessageBus, SESSION_RESET
 from ..llm.base import ChatMessage, LLMProvider, ToolCall
 from ..memory import Memory
 from ..tools.base import Tool
-from ..storage.models import Message
 from ..storage.sqlite import SqliteStore
 from ..prompt.segments import SystemPromptBuilder
 from .reason import Reasoner
@@ -158,12 +157,6 @@ class AgentLoop:
     async def _persist_turn(self, records: list[ChatMessage]) -> None:
         if not self.storage or not self._sessions.get(self._current_source):
             return
+        sid = self._sessions[self._current_source]
         for rec in records:
-            self.storage.save_message(
-                Message(
-                    session_id=self._sessions[self._current_source],
-                    role=rec.role,
-                    content=rec.content,
-                    meta=rec.meta,
-                )
-            )
+            self.storage.save_message(sid, rec)

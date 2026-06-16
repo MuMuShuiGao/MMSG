@@ -14,17 +14,6 @@ class Session:
 
 
 @dataclass
-class Message:
-    session_id: str
-    role: str
-    content: str = ""
-    meta: dict = field(default_factory=dict)
-    id: int | None = None
-    seq: int = 0
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-
-@dataclass
 class CuriosityNote:
     """主动引擎的好奇心笔记。"""
     content: str

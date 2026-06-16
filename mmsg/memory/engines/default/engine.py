@@ -10,9 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ...protocol import MarkdownMemoryLayer, MemoryEngine, MemoryRuntime
-from ...fact import Fact
-from .current_context import ContextWindow
-from .memory import KnowledgeBase
+from .markdown_file import MarkdownFile
 from .vector_store import VectorStore
 
 
@@ -21,8 +19,8 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
     def __init__(self, memory_dir: Path) -> None:
         memory_dir.mkdir(parents=True, exist_ok=True)
         self.memory_dir = memory_dir
-        self.context = ContextWindow(memory_dir / "current_context.md")
-        self.knowledge = KnowledgeBase(memory_dir / "memory.md")
+        self.context = MarkdownFile(memory_dir / "current_context.md", default="# 近期摘要\n")
+        self.knowledge = MarkdownFile(memory_dir / "memory.md")
 
     def get_memory_context(self) -> str | None:
         return self.knowledge.read()

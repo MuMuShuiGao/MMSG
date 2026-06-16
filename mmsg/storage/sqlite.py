@@ -15,7 +15,8 @@ except ImportError:
         "或重新安装项目：pip install -e ."
     )
 
-from .models import Message, Session
+from .models import Session
+from ..llm.base import ChatMessage
 
 log = logging.getLogger("mmsg.storage")
 
@@ -105,15 +106,15 @@ class SqliteStore:
 
     # ---- message ----
 
-    def save_message(self, msg: Message) -> int:
-        now = msg.created_at or datetime.now(timezone.utc).isoformat()
-        seq = msg.seq or self._next_seq(msg.session_id)
+    def save_message(self, session_id: str, msg: ChatMessage) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        seq = self._next_seq(session_id)
         cur = self._conn.execute(
             "INSERT INTO message (session_id, seq, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (msg.session_id, seq, msg.role, msg.content, json.dumps(msg.meta, ensure_ascii=False), now),
+            (session_id, seq, msg.role, msg.content or "", json.dumps(msg.meta, ensure_ascii=False), now),
         )
         self._conn.commit()
-        self.touch_session(msg.session_id)
+        self.touch_session(session_id)
         return cur.lastrowid
 
     def _next_seq(self, session_id: str) -> int:

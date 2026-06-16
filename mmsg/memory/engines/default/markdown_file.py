@@ -1,14 +1,14 @@
-"""上下文窗口 — 管理 current_context.md，负责近期摘要的读写。"""
+"""通用 Markdown 文件读写封装。"""
 from __future__ import annotations
 
 from pathlib import Path
 
 
-class ContextWindow:
-    def __init__(self, file_path: Path) -> None:
+class MarkdownFile:
+    def __init__(self, file_path: Path, default: str = "") -> None:
         self._path = file_path
         if not self._path.exists():
-            self._path.write_text("# 近期摘要\n", encoding="utf-8")
+            self._path.write_text(default, encoding="utf-8")
 
     def read(self) -> str | None:
         content = self._path.read_text(encoding="utf-8").strip()

@@ -449,13 +449,10 @@ class ProactiveEngine:
         user_source, session_id = target
 
         # 写入 message 表，LLM 恢复历史时能看到主动推送的上下文
-        from ..storage.models import Message
-        self._store.save_message(Message(
-            session_id=session_id,
-            role="assistant",
-            content=msg,
-            meta={"proactive": True},
-        ))
+        self._store.save_message(
+            session_id,
+            ChatMessage(role="assistant", content=msg, meta={"proactive": True}),
+        )
 
         user_id = user_source[len(self._channel) + 1:]  # "qqbot:OPENID" → "OPENID"
 

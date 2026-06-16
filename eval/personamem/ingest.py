@@ -13,7 +13,7 @@ from mmsg.llm.base import ChatMessage
 from mmsg.memory import MemoryRuntime
 from mmsg.memory.engines.default.curator import MemoryCurator
 from mmsg.memory.engines.default.engine import DefaultMarkdownLayer
-from mmsg.storage.models import Message
+from mmsg.llm.base import ChatMessage
 from mmsg.storage.sqlite import SqliteStore
 
 log = logging.getLogger("mmsg.eval.ingest")
@@ -60,8 +60,9 @@ async def ingest_history(
             continue
 
         # 写入 SQLite（curator 通过 watermark 只取增量）
-        store.save_message(Message(session_id=session_id, role=role, content=content))
-        pending_consolidate.append(ChatMessage(role=role, content=content))
+        cm = ChatMessage(role=role, content=content)
+        store.save_message(session_id, cm)
+        pending_consolidate.append(cm)
 
         if role == "user":
             pending_curator += 1
