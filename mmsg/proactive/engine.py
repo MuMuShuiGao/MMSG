@@ -471,7 +471,7 @@ class ProactiveEngine:
                         WHERE vm.embedding MATCH ?
                           AND vm.distance < ?
                           AND m.created_at >= date('now', ?)
-                        LIMIT ?
+                          AND k = ?
                     )
                     """,
                     (vec_blob, 1.0 - topic_threshold, f'-{mentions_window} days', mentions_max_k),
@@ -549,17 +549,19 @@ class ProactiveEngine:
             """
             SELECT vm.message_id, vm.distance
             FROM vec_message vm
-            WHERE vm.message_id IN ({})
-              AND vm.embedding MATCH ?
+            WHERE vm.embedding MATCH ?
               AND vm.distance < ?
-            LIMIT 1
-            """.format(",".join("?" * len(message_ids))),
-            [*message_ids, vec_blob, 1.0 - topic_threshold],
+              AND k = ?
+            """,
+            (vec_blob, 1.0 - topic_threshold, len(message_ids) * 2),
         ).fetchall()
-        if rows:
-            log.debug("反刍检测命中: topic_key=%s msg_id=%s distance=%.3f",
-                     topic_key, rows[0][0], rows[0][1])
-            return True
+        # Filter to only scanned message_ids (vec0 doesn't support IN alongside MATCH)
+        message_set = set(message_ids)
+        for row in rows:
+            if row[0] in message_set:
+                log.debug("反刍检测命中: topic_key=%s msg_id=%s distance=%.3f",
+                         topic_key, row[0], row[1])
+                return True
         return False
 
     @staticmethod

@@ -141,6 +141,18 @@ class SqliteStore:
         rows.reverse()
         return [dict(r) for r in rows]
 
+    def list_messages_paginated(
+        self, offset: int = 0, limit: int = 100
+    ) -> tuple[list[dict[str, Any]], int]:
+        total = self._conn.execute("SELECT COUNT(*) FROM message").fetchone()[0]
+        rows = self._conn.execute(
+            "SELECT m.*, s.title as session_title, s.source as session_source "
+            "FROM message m LEFT JOIN session s ON m.session_id = s.id "
+            "ORDER BY m.id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows], total
+
     def get_session_by_source(self, source: str) -> dict[str, Any] | None:
         row = self._conn.execute(
             "SELECT * FROM session WHERE source = ? ORDER BY updated_at DESC LIMIT 1",

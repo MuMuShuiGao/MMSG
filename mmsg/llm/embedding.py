@@ -34,22 +34,26 @@ class OpenAIEmbeddingProvider:
         import logging
         log = logging.getLogger(__name__)
 
-        body = {
-            "model": model or self.model,
-            "input": texts,
-        }
+        model_name = model or self.model
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        all_embeddings: list[list[float]] = []
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            r = await client.post(
-                f"{self.base_url}/embeddings",
-                json=body,
-                headers=headers,
-            )
-            if r.is_error:
-                log.error("embedding API error: %s %s", r.status_code, r.text[:500])
-            r.raise_for_status()
-            data = r.json()
-        return [item["embedding"] for item in data["data"]]
+            for i in range(0, len(texts), 10):
+                batch = texts[i : i + 10]
+                body = {"model": model_name, "input": batch}
+                r = await client.post(
+                    f"{self.base_url}/embeddings",
+                    json=body,
+                    headers=headers,
+                )
+                if r.is_error:
+                    log.error("embedding API error: %s %s", r.status_code, r.text[:500])
+                r.raise_for_status()
+                data = r.json()
+                all_embeddings.extend(item["embedding"] for item in data["data"])
+
+        return all_embeddings
 
 
 def create_embedding_provider(cfg: Any | None = None) -> OpenAIEmbeddingProvider | None:

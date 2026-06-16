@@ -109,14 +109,6 @@ body {
 .bubble:hover { transform: translateY(-1px); }
 .msg .role-label { font-size: 11px; color: #64748b; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; }
 .msg .msg-id { font-size: 10px; color: #94a3b8; }
-.msg .edit-btn { background: none; border: none; color: var(--brand); cursor: pointer; font-size: 11px; font-weight: 600; transition: color .15s; }
-.msg .edit-btn:hover { color: var(--brand-2); }
-.msg textarea { width: 100%; min-height: 60px; padding: 10px; border-radius: 10px; border: 1px solid var(--brand); background: #fff; color: #1e293b; font-size: 13px; resize: vertical; outline: none; font-family: inherit; box-shadow: 0 0 0 4px var(--ring); }
-.msg .edit-actions { display: flex; gap: 6px; margin-top: 8px; }
-.msg .edit-actions button { padding: 6px 14px; border-radius: 8px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; transition: transform .15s, box-shadow .2s; }
-.msg .edit-actions button:hover { transform: translateY(-1px); }
-.msg .edit-actions .save-btn { background: var(--brand-grad); color: #fff; }
-.msg .edit-actions .cancel-btn { background: rgba(241,245,249,.9); color: #475569; border: 1px solid rgba(148,163,184,.35); }
 
 .usage-panel { flex: 1; padding: 22px; overflow: auto; animation: fadeUp .45s ease both; }
 .usage-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
@@ -166,6 +158,7 @@ const { useState, useEffect, useCallback, useRef } = React;
 // ── helpers ──
 const api = (url, opts) => fetch(url, opts).then(r => r.ok ? r.json() : Promise.reject(r));
 const fmtTs = ts => ts ? new Date(ts).toLocaleString("zh-CN", {month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}) : "";
+const fmtTsFull = ts => ts ? new Date(ts).toLocaleString("zh-CN", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "";
 const fmtNum = n => Number(n || 0).toLocaleString("zh-CN");
 const usageOf = m => (m.meta && m.meta.usage) || {};
 const usageText = usage => {
@@ -181,8 +174,6 @@ function SessionsView() {
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [search, setSearch] = useState("");
-  const [editingId, setEditingId] = useState(null);
-  const [editText, setEditText] = useState("");
   const [titleEdit, setTitleEdit] = useState(null);
   const [genLoading, setGenLoading] = useState(false);
 
@@ -190,7 +181,6 @@ function SessionsView() {
 
   const selectSession = id => {
     setSelectedId(id);
-    setEditingId(null);
     api(`/api/sessions/${id}/messages`).then(setMessages).catch(() => setMessages([]));
   };
 
@@ -200,15 +190,6 @@ function SessionsView() {
     setSessions(prev => prev.filter(s => s.id !== id));
     if (selectedId === id) { setSelectedId(null); setMessages([]); }
     toast("会话已删除");
-  };
-
-  const startEdit = msg => { setEditingId(msg.id); setEditText(msg.content); };
-  const cancelEdit = () => setEditingId(null);
-  const saveEdit = async (msgId) => {
-    await api(`/api/messages/${msgId}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({content: editText}) });
-    setMessages(prev => prev.map(m => m.id === msgId ? {...m, content: editText} : m));
-    setEditingId(null);
-    toast("消息已保存");
   };
 
   const saveTitle = async (id, title) => {
@@ -292,19 +273,8 @@ function SessionsView() {
                     <span>{m.role}</span>
                     <span className="msg-id">#{m.seq || m.id}</span>
                     {usageText(usageOf(m)) && <span className="msg-id">{usageText(usageOf(m))}</span>}
-                    {editingId !== m.id && <button className="edit-btn" onClick={() => startEdit(m)}>编辑</button>}
                   </div>
-                  {editingId === m.id ? (
-                    <>
-                      <textarea value={editText} onChange={e => setEditText(e.target.value)} />
-                      <div className="edit-actions">
-                        <button className="save-btn" onClick={() => saveEdit(m.id)}>保存</button>
-                        <button className="cancel-btn" onClick={cancelEdit}>取消</button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="bubble">{m.content}</div>
-                  )}
+                  <div className="bubble">{m.content}</div>
                 </div>
               ))}
             </div>
@@ -485,6 +455,86 @@ function MemoryView() {
   );
 }
 
+// ── Messages Tab ──
+function MessagesView() {
+  const PAGE = 100;
+  const [data, setData] = useState({rows:[], total:0});
+  const [offset, setOffset] = useState(0);
+  const [expandedId, setExpandedId] = useState(null);
+
+  const load = o => api(`/api/messages?offset=${o}&limit=${PAGE}`).then(setData).catch(() => {});
+
+  useEffect(() => { load(0); }, []);
+
+  const totalPages = Math.ceil(data.total / PAGE);
+  const curPage = Math.floor(offset / PAGE) + 1;
+
+  const goPage = p => {
+    const o = (p - 1) * PAGE;
+    setOffset(o);
+    load(o);
+  };
+
+  const roleBadge = role => {
+    const map = { user: {bg:"#dbeafe",color:"#1d4ed8"}, assistant: {bg:"#d1fae5",color:"#065f46"}, system: {bg:"#fef3c7",color:"#92400e"}, tool: {bg:"#f3f4f6",color:"#374151"} };
+    const s = map[role] || {bg:"#f3f4f6",color:"#6b7280"};
+    return <span style={{padding:"2px 7px",borderRadius:5,fontSize:11,fontWeight:700,background:s.bg,color:s.color}}>{role}</span>;
+  };
+
+  const truncated = content => {
+    if (!content) return "";
+    const flat = content.replace(/\n/g, " ");
+    return flat.length > 80 ? flat.slice(0, 80) + "…" : flat;
+  };
+
+  return (
+    <div className="usage-panel">
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+        <h3 style={{color:"#1e293b",fontSize:15,fontWeight:700,margin:0}}>📨 全部消息</h3>
+        <span style={{fontSize:12,color:"#94a3b8"}}>共 {fmtNum(data.total)} 条</span>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+        <button disabled={offset === 0} onClick={() => goPage(1)}
+          style={{padding:"5px 12px",borderRadius:8,border:"1px solid rgba(148,163,184,.35)",background:"#fff",cursor: offset===0?"default":"pointer",fontSize:12,opacity:offset===0?.5:1}}>««</button>
+        <button disabled={offset === 0} onClick={() => goPage(curPage - 1)}
+          style={{padding:"5px 12px",borderRadius:8,border:"1px solid rgba(148,163,184,.35)",background:"#fff",cursor: offset===0?"default":"pointer",fontSize:12,opacity:offset===0?.5:1}}>‹</button>
+        <span style={{fontSize:12,color:"#475569"}}>第 {curPage}/{totalPages || 1} 页</span>
+        <button disabled={offset + PAGE >= data.total} onClick={() => goPage(curPage + 1)}
+          style={{padding:"5px 12px",borderRadius:8,border:"1px solid rgba(148,163,184,.35)",background:"#fff",cursor: offset+PAGE>=data.total?"default":"pointer",fontSize:12,opacity:offset+PAGE>=data.total?.5:1}}>›</button>
+        <button disabled={offset + PAGE >= data.total} onClick={() => goPage(totalPages)}
+          style={{padding:"5px 12px",borderRadius:8,border:"1px solid rgba(148,163,184,.35)",background:"#fff",cursor: offset+PAGE>=data.total?"default":"pointer",fontSize:12,opacity:offset+PAGE>=data.total?.5:1}}>»»</button>
+      </div>
+      <table className="usage-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>角色</th>
+            <th>内容</th>
+            <th>会话</th>
+            <th>时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.rows.map(m => (
+            <tr key={m.id} style={{cursor:"pointer"}} onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}>
+              <td style={{fontSize:12,fontFamily:"'Fira Code',monospace",color:"#94a3b8"}}>{m.id}</td>
+              <td>{roleBadge(m.role)}</td>
+              <td style={{maxWidth:360,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={m.content}>
+                {expandedId === m.id ? m.content : truncated(m.content)}
+              </td>
+              <td style={{fontSize:11,color:"#64748b",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={m.session_title || m.session_id}>
+                {m.session_title || m.session_id || "—"}
+              </td>
+              <td style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap"}}>{fmtTsFull(m.created_at)}</td>
+            </tr>
+          ))}
+          {data.rows.length === 0 && <tr><td colSpan="5" style={{textAlign:"center",color:"#9ca3af"}}>暂无消息</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── Curiosity Tab ──
 function CuriosityView() {
   const [notes, setNotes] = useState([]);
@@ -581,7 +631,7 @@ function CuriosityView() {
           setLoading("consolidate");
           addLog("立即整理", "正在调用 LLM 筛选 pending notes...");
           try {
-            const r = await api("/api/curiosity/trigger-consolidate", { method: "POST" });
+            const r = await api("/api/curiosity/review-notes", { method: "POST" });
             addLog("立即整理", `完成 - ${r.count} 条 pending 候选`);
             toast(`整理完成，${r.count} 条 pending 候选`);
             load();
@@ -735,12 +785,13 @@ function App() {
         <h1>⚡ MMSG Dashboard</h1>
         <div className="tabs">
           <button className={`tab${tab==="sessions"?" active":""}`} onClick={()=>setTab("sessions")}>💬 Sessions</button>
+          <button className={`tab${tab==="messages"?" active":""}`} onClick={()=>setTab("messages")}>📨 Messages</button>
           <button className={`tab${tab==="usage"?" active":""}`} onClick={()=>setTab("usage")}>📊 Usage</button>
           <button className={`tab${tab==="memory"?" active":""}`} onClick={()=>setTab("memory")}>🧠 Memory</button>
           <button className={`tab${tab==="curiosity"?" active":""}`} onClick={()=>setTab("curiosity")}>💭 Curiosity</button>
         </div>
       </div>
-      {tab === "sessions" ? <SessionsView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : <CuriosityView />}
+      {tab === "sessions" ? <SessionsView /> : tab === "messages" ? <MessagesView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : <CuriosityView />}
     </div>
   );
 }

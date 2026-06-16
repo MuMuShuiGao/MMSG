@@ -59,6 +59,20 @@ def _build_app(
         store.delete_session(session_id)
         return {"ok": True}
 
+    # ── Messages ────────────────────────────────────
+
+    @app.get("/api/messages")
+    async def list_messages(offset: int = 0, limit: int = 100) -> dict[str, Any]:
+        rows, total = store.list_messages_paginated(offset=offset, limit=limit)
+        for m in rows:
+            meta_raw = m.get("meta")
+            if isinstance(meta_raw, str):
+                try:
+                    m["meta"] = json.loads(meta_raw)
+                except (json.JSONDecodeError, TypeError):
+                    m["meta"] = {}
+        return {"rows": rows, "total": total}
+
     @app.patch("/api/sessions/{session_id}")
     async def rename_session(session_id: str, body: dict[str, Any]) -> dict[str, Any]:
         title = body.get("title", "")
@@ -66,14 +80,6 @@ def _build_app(
             "UPDATE session SET title = ? WHERE id = ?", (title, session_id)
         )
         store._conn.commit()
-        return {"ok": True}
-
-    @app.patch("/api/messages/{msg_id}")
-    async def update_message(msg_id: int, body: dict[str, Any]) -> dict[str, Any]:
-        content = body.get("content")
-        if content is None:
-            raise HTTPException(status_code=400, detail="content required")
-        store.update_message(msg_id, content)
         return {"ok": True}
 
     @app.get("/api/usage/summary")

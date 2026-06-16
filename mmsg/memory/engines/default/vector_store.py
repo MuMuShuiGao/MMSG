@@ -125,8 +125,7 @@ class VectorStore:
                 SELECT fact_id AS id, distance
                 FROM vec_fact
                 WHERE embedding MATCH ?
-                ORDER BY distance
-                LIMIT ?
+                  AND k = ?
             ),
             sparse AS (
                 SELECT rowid AS id, bm25(fts_fact) AS rank
@@ -168,8 +167,7 @@ class VectorStore:
             JOIN fact f ON f.id = v.fact_id
             WHERE v.embedding MATCH ?
               AND v.distance < ?
-            ORDER BY v.distance
-            LIMIT ?
+              AND k = ?
             """,
             (vec_blob, 1.0 - threshold, limit),
         ).fetchall()
