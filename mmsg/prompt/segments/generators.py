@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .constants import MMSG_BEHAVIOR_TEXT, MMSG_IDENTITY_TEXT, MMSG_TOOL_USAGE_TEXT
+from .constants import (
+    MMSG_BEHAVIOR_TEXT,
+    MMSG_IDENTITY_TEXT,
+    MMSG_OUTPUT_FORMAT_TEXT,
+    MMSG_TOOL_USAGE_TEXT,
+)
 
 
 def build_identity() -> str:
@@ -24,6 +29,11 @@ def build_behavior() -> str:
 def build_tool_usage() -> str:
     """工具使用规范（静态）。"""
     return MMSG_TOOL_USAGE_TEXT
+
+
+def build_output_format() -> str:
+    """输出格式规范（静态）。"""
+    return MMSG_OUTPUT_FORMAT_TEXT
 
 
 def build_workspace(workspace: Path) -> str:

@@ -22,22 +22,21 @@ class OpenAIEmbeddingProvider:
         model: str,
         api_key: str,
         base_url: str,
-        dimensions: int,
         timeout: float = 30.0,
     ) -> None:
         self.model = model
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self.dimensions = dimensions
         self.timeout = timeout
 
     async def embed(self, texts: list[str], model: str | None = None) -> list[list[float]]:
         import httpx
+        import logging
+        log = logging.getLogger(__name__)
 
         body = {
             "model": model or self.model,
             "input": texts,
-            "encoding_format": "float",
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -46,6 +45,8 @@ class OpenAIEmbeddingProvider:
                 json=body,
                 headers=headers,
             )
+            if r.is_error:
+                log.error("embedding API error: %s %s", r.status_code, r.text[:500])
             r.raise_for_status()
             data = r.json()
         return [item["embedding"] for item in data["data"]]
@@ -63,5 +64,4 @@ def create_embedding_provider(cfg: Any | None = None) -> OpenAIEmbeddingProvider
         model=cfg("model", "text-embedding-v3"),
         api_key=api_key,
         base_url=cfg("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        dimensions=int(cfg("dimensions", 1024)),
     )

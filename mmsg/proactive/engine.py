@@ -457,20 +457,24 @@ class ProactiveEngine:
 
         mentions_window = int(_cfg("mentions_window_days", 7))
         topic_threshold = float(_cfg("topic_similarity_threshold", 0.85))
+        mentions_max_k = int(_cfg("mentions_max_k", 1000))
 
         for n, vec in zip([n for n in notes if n.topic_key], embeddings):
             try:
                 vec_blob = _serialize_embedding(vec)
                 rows = self._store._conn.execute(
                     """
-                    SELECT COUNT(*) as cnt
-                    FROM vec_message vm
-                    JOIN message m ON m.id = vm.message_id
-                    WHERE vm.embedding MATCH ?
-                      AND vm.distance < ?
-                      AND m.created_at >= date('now', ?)
+                    SELECT COUNT(*) as cnt FROM (
+                        SELECT 1
+                        FROM vec_message vm
+                        JOIN message m ON m.id = vm.message_id
+                        WHERE vm.embedding MATCH ?
+                          AND vm.distance < ?
+                          AND m.created_at >= date('now', ?)
+                        LIMIT ?
+                    )
                     """,
-                    (vec_blob, 1.0 - topic_threshold, f'-{mentions_window} days'),
+                    (vec_blob, 1.0 - topic_threshold, f'-{mentions_window} days', mentions_max_k),
                 ).fetchone()
                 result[n.id] = rows[0] if rows else 0
             except Exception:

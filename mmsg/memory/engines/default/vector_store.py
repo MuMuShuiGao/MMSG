@@ -229,19 +229,21 @@ def _deserialize_embedding(blob: bytes) -> list[float]:
     return list(struct.unpack(f"<{n}f", blob))
 
 
-def _row_to_fact(row: dict[str, Any]) -> Fact:
+def _row_to_fact(row: sqlite3.Row) -> Fact:
     source_ids = []
     try:
-        raw = row.get("source_message_ids", "[]")
+        raw = row["source_message_ids"] if "source_message_ids" in row.keys() else "[]"
         if raw:
             source_ids = json.loads(raw) if isinstance(raw, str) else raw
     except (json.JSONDecodeError, TypeError):
         pass
+    keys = row.keys()
+    mention_count = row["mention_count"] if "mention_count" in keys else 1
     return Fact(
         id=row["id"],
         content=row["content"],
         source_message_ids=source_ids,
         created_at=row["created_at"],
-        mention_count=row.get("mention_count", 1),
+        mention_count=mention_count,
         last_mentioned_at=row["last_mentioned_at"],
     )

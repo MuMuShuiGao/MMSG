@@ -19,7 +19,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .generators import build_behavior, build_identity, build_tool_usage, build_workspace
+from .generators import (
+    build_behavior,
+    build_identity,
+    build_output_format,
+    build_tool_usage,
+    build_workspace,
+)
 
 
 class SystemPromptBuilder:
@@ -31,10 +37,12 @@ class SystemPromptBuilder:
         workspace: Path | None = None,
         include_behavior: bool = True,
         include_tool_usage: bool = True,
+        include_output_format: bool = True,
     ) -> None:
         self.workspace = workspace
         self.include_behavior = include_behavior
         self.include_tool_usage = include_tool_usage
+        self.include_output_format = include_output_format
 
     def render(self) -> str:
         """按 静态前缀 → 动态尾部 顺序拼接，最大化 KV cache 命中率。
@@ -50,6 +58,9 @@ class SystemPromptBuilder:
 
         if self.include_tool_usage:
             parts.append(build_tool_usage())
+
+        if self.include_output_format:
+            parts.append(build_output_format())
 
         if self.workspace is not None:
             parts.append(build_workspace(self.workspace))

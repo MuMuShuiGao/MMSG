@@ -59,7 +59,6 @@ consolidate_interval = 900
 api_key = "sk-your-dashscope-key"
 base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 model = "text-embedding-v3"
-dimensions = 1024
 
 [consolidator]
 # 事实提取 consolidator 配置
