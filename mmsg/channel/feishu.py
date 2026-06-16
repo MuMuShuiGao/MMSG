@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from typing import Any
 
 from ..bus.messagebus import MessageBus, OutboundItem
@@ -40,26 +41,28 @@ logging.getLogger("Lark").addFilter(_lark_filter)
 _lark_Client: Any = None
 _CreateMessageRequest: Any = None
 _CreateMessageRequestBody: Any = None
-_UpdateMessageRequest: Any = None
-_UpdateMessageRequestBody: Any = None
+_PatchMessageRequest: Any = None
+_PatchMessageRequestBody: Any = None
 
-# 流式编辑限制
+# 流式编辑限制：保留第 19 次给 done=True，中间最多用 18 次
 _MAX_EDITS_PER_MESSAGE = 20
+_STREAM_MAX_INTERMEDIATE = 10   # 中间流式 PATCH 最多次数（留额度给 done=True）
+_STREAM_THROTTLE_SECS = 0.7    # 中间 PATCH 最小间隔（秒）
 
 
 def _import_lark_rest():
     """惰性导入 lark-oapi REST 类型（主线程安全）。"""
     global _lark_Client, \
         _CreateMessageRequest, _CreateMessageRequestBody, \
-        _UpdateMessageRequest, _UpdateMessageRequestBody
+        _PatchMessageRequest, _PatchMessageRequestBody
     if _lark_Client is not None:
         return
     from lark_oapi import Client as _lark_Client
     from lark_oapi.api.im.v1 import (
         CreateMessageRequest as _CreateMessageRequest,
         CreateMessageRequestBody as _CreateMessageRequestBody,
-        UpdateMessageRequest as _UpdateMessageRequest,
-        UpdateMessageRequestBody as _UpdateMessageRequestBody,
+        PatchMessageRequest as _PatchMessageRequest,
+        PatchMessageRequestBody as _PatchMessageRequestBody,
     )
 
 
@@ -67,7 +70,7 @@ class FeishuChannel:
     """飞书 Bot WebSocket 通道。
 
     - 通过 WS 长连接接收用户消息
-    - 通过 REST API 发送回复
+    - 通过 REST API 以交互卡片形式流式发送回复
     - source 命名：feishu:{open_id}
     """
 
@@ -81,7 +84,7 @@ class FeishuChannel:
         self._shutdown = threading.Event()   # 通知 executor 线程退出
         self._ws_client_ref: Any = None      # lark_oapi WsClient 引用，用于 stop 时控制
         self._ws_loop_ref: Any = None        # WS 线程内的事件循环
-        # 流式输出状态：chat_id → {message_id, edit_count}
+        # 流式卡片状态：chat_id → {message_id, edit_count, last_edit_ts}
         self._streams: dict[str, dict[str, Any]] = {}
 
     # ── Lifecycle ────────────────────────────────────
@@ -180,7 +183,16 @@ class FeishuChannel:
         if self._shutdown.is_set():
             return
 
-        # 移除已缓存的 ws 模块，迫使在当前线程内重新初始化
+        # 移除已缓存的 ws 模块，迫使在当前线程内重新初始化。
+        # 不仅要清 sys.modules，还要清 lark_oapi 包上的 ws 属性，否则 Python
+        # 会直接从父包拿到旧模块对象，导致事件 loop 仍是主线程的 loop。
+        import lark_oapi as _lark_oapi_pkg
+        for attr in list(dir(_lark_oapi_pkg)):
+            if attr.startswith("ws"):
+                try:
+                    delattr(_lark_oapi_pkg, attr)
+                except Exception:
+                    pass
         for key in list(sys.modules.keys()):
             if key.startswith("lark_oapi.ws"):
                 del sys.modules[key]
@@ -292,58 +304,81 @@ class FeishuChannel:
     # ── Outbound handler（主事件循环内调用）──────────
 
     async def _on_outbound(self, item: OutboundItem) -> None:
-        """收到 Agent 回复 → 调用飞书 REST API 流式发送/编辑消息。
+        """收到 Agent 回复 → 调用飞书 REST API 流式发送/编辑卡片消息。
 
         流式策略：
-        - done=False 首条 → POST create，存入 message_id
-        - done=False 后续 → PUT update 编辑已发送消息（上限 20 次）
-        - done=True → PUT update 最终内容（若无流式记录则直接 create）
+        - done=False 首条 → POST create 卡片，存入 message_id
+        - done=False 后续 → 限频 PATCH（间隔 ≥ 0.8s，中间最多 6 次）
+        - done=True   → 始终 PATCH 已有卡片（无论 edit_count）；无记录则 create
         """
         open_id = item.payload.get("open_id")
         chat_id = item.payload.get("chat_id", "")
         text = item.payload.get("text", "")
         done = item.payload.get("done", True)
 
-        if not open_id or not text:
+        if not open_id or not chat_id or not text:
+            log.warning("outbound 缺失字段，跳过: open_id=%s chat_id=%s text_empty=%s",
+                        open_id, chat_id, not text)
             return
         if not item.source.startswith("feishu:"):
             return
 
-        source = item.source
-        stream = self._streams.get(source)
+        # 以 chat_id 为流式 key，避免同一 open_id 跨多个会话互相覆盖卡片
+        stream = self._streams.get(chat_id)
 
         if not done:
-            # ── 中间 chunk：流式刷新 ──
+            # ── 中间 chunk：限频流式刷新卡片 ──
             if stream is None:
-                # 首次：创建消息，记录 message_id
-                msg_id = await self._create_text(chat_id, text)
+                # 首次：创建卡片，记录 message_id
+                msg_id = await self._create_card(chat_id, text, done=False)
                 if msg_id:
-                    self._streams[source] = {"message_id": msg_id, "edit_count": 0}
-            elif stream["edit_count"] < _MAX_EDITS_PER_MESSAGE:
-                # 编辑已发送消息，递进刷新
-                await self._update_text(stream["message_id"], text)
-                stream["edit_count"] += 1
-            # 超过 20 次编辑则跳过，等 done=True 时发送最终结果
-        else:
-            # ── 最终 chunk：刷新最终内容并收尾 ──
-            if stream is not None:
-                if stream["edit_count"] < _MAX_EDITS_PER_MESSAGE:
-                    await self._update_text(stream["message_id"], text)
-                else:
-                    # 编辑次数已超限，发一条新消息作为最终回复
-                    await self._create_text(chat_id, text)
-                self._streams.pop(source, None)
+                    self._streams[chat_id] = {
+                        "message_id": msg_id,
+                        "edit_count": 0,
+                        "last_edit_ts": 0.0,
+                    }
             else:
-                # 无流式记录（单步直接回复），直接创建
-                await self._create_text(chat_id, text)
+                # 限频：中间 PATCH 留最后一次额度给 done=True
+                now = time.monotonic()
+                since_last = now - stream.get("last_edit_ts", 0.0)
+                under_limit = stream["edit_count"] < _STREAM_MAX_INTERMEDIATE
+                if under_limit and since_last >= _STREAM_THROTTLE_SECS:
+                    await self._update_card(stream["message_id"], text, done=False)
+                    stream["edit_count"] += 1
+                    stream["last_edit_ts"] = now
+                # 否则：跳过本次，等下一个 chunk 或 done=True
+        else:
+            # ── 最终 chunk：始终 PATCH 已有卡片，永不新建第二张 ──
+            if stream is not None:
+                await self._update_card(stream["message_id"], text, done=True)
+                self._streams.pop(chat_id, None)
+            else:
+                # 无流式记录（单步直接回复），直接创建卡片
+                await self._create_card(chat_id, text, done=True)
 
-    async def _create_text(self, chat_id: str, text: str) -> str | None:
-        """发送一条文本消息，返回 message_id。"""
+    def _build_card(self, text: str, done: bool) -> dict:
+        """构造飞书卡片消息内容（Card Schema 1.0）。"""
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": "已完成" if done else "正在生成..."},
+                "template": "blue" if done else "wathet",
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": text},
+                }
+            ],
+        }
+
+    async def _create_card(self, chat_id: str, text: str, done: bool) -> str | None:
+        """发送一条交互卡片消息，返回 message_id。"""
         try:
             body = _CreateMessageRequestBody.builder() \
                 .receive_id(chat_id) \
-                .msg_type("text") \
-                .content(json.dumps({"text": text}, ensure_ascii=False)) \
+                .msg_type("interactive") \
+                .content(json.dumps(self._build_card(text, done), ensure_ascii=False)) \
                 .build()
 
             request = _CreateMessageRequest.builder() \
@@ -351,28 +386,31 @@ class FeishuChannel:
                 .request_body(body) \
                 .build()
 
+            log.debug("飞书发卡片 chat=%s done=%s text_len=%d", chat_id, done, len(text))
             resp = await self._rest_client.im.v1.message.acreate(request)
             msg_id = resp.data.message_id if resp.data else None
+            if not msg_id:
+                log.warning("飞书创建卡片返回 msg_id 为空, code=%s msg=%s",
+                            getattr(resp, 'code', '?'), getattr(resp, 'msg', '?'))
             return msg_id
         except Exception:
-            log.exception("飞书创建消息失败")
+            log.exception("飞书创建卡片消息失败")
             return None
 
-    async def _update_text(self, message_id: str, text: str) -> bool:
-        """编辑一条已发送的文本消息。返回是否成功。"""
+    async def _update_card(self, message_id: str, text: str, done: bool) -> bool:
+        """编辑一条已发送的交互卡片消息。返回是否成功。"""
         try:
-            body = _UpdateMessageRequestBody.builder() \
-                .msg_type("text") \
-                .content(json.dumps({"text": text}, ensure_ascii=False)) \
+            body = _PatchMessageRequestBody.builder() \
+                .content(json.dumps(self._build_card(text, done), ensure_ascii=False)) \
                 .build()
 
-            request = _UpdateMessageRequest.builder() \
+            request = _PatchMessageRequest.builder() \
                 .message_id(message_id) \
                 .request_body(body) \
                 .build()
 
-            await self._rest_client.im.v1.message.aupdate(request)
+            await self._rest_client.im.v1.message.apatch(request)
             return True
         except Exception:
-            log.exception("飞书编辑消息失败 %s", message_id)
+            log.exception("飞书编辑卡片消息失败 %s", message_id)
             return False

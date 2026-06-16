@@ -84,7 +84,7 @@ class Reasoner:
     async def think(self) -> AsyncGenerator[ThinkingResult, None]:
         """执行完整 ReAct 循环，每个 step 完成后 yield 一个 ThinkingResult。
 
-        done=False：中间 step；done=True：最终结果，包含完整 records。
+        done=False：中间 step 或 token 流式增量；done=True：最终结果，包含完整 records。
         进入循环前调一次 Recaller（判别 + hybrid 召回），多 step 共享同一份 facts。
         """
         records: list[ChatMessage] = []
@@ -111,31 +111,55 @@ class Reasoner:
         for step in range(1, self.max_steps + 1):
             msgs = await self.context.build(self._history, recall_facts)
 
-            result = await self._reason_step(msgs, tool_schemas, step)
-            total_usage = result.usage or total_usage
+            # 尝试流式执行本步，若 LLM 调用结束后没有 tool_calls 则说明是最终回复步，
+            # 此时已经在 _stream_reason_step 里逐 token yield 过了；否则继续工具调用循环。
+            final_text = ""
+            collected_content = ""
+            collected_tool_calls: list[ToolCall] = []
+            finish_reason: str | None = None
+            usage: dict[str, Any] = {}
 
-            tc_dumps = [tc.model_dump() for tc in result.tool_calls]
+            async for _item in self._stream_reason_step(msgs, tool_schemas, step):
+                if isinstance(_item, str):
+                    # token 增量
+                    collected_content += _item
+                    yield ThinkingResult(
+                        content=collected_content,
+                        records=list(records),
+                        steps=step,
+                        usage=total_usage,
+                        done=False,
+                    )
+                else:
+                    # ReasoningResult sentinel（流式结束信号）
+                    collected_tool_calls = _item.tool_calls
+                    finish_reason = _item.finish_reason
+                    usage = _item.usage
+
+            total_usage = usage or total_usage
+
+            tc_dumps = [tc.model_dump() for tc in collected_tool_calls]
             usage_meta = {"tool_calls": tc_dumps}
-            if result.usage:
-                usage_meta["usage"] = result.usage
+            if usage:
+                usage_meta["usage"] = usage
             self._history.append(
                 ChatMessage(
                     role="assistant",
-                    content=result.content or "",
-                    tool_calls=result.tool_calls,
+                    content=collected_content or "",
+                    tool_calls=collected_tool_calls,
                 )
             )
             records.append(
                 ChatMessage(
                     role="assistant",
-                    content=result.content or "",
-                    tool_calls=result.tool_calls,
+                    content=collected_content or "",
+                    tool_calls=collected_tool_calls,
                     meta=usage_meta,
                 )
             )
 
-            if not result.tool_calls:
-                final_text = result.content
+            if not collected_tool_calls:
+                final_text = collected_content
                 await self.bus.observe(
                     AgentEvent.AfterStep,
                     self.name,
@@ -150,7 +174,7 @@ class Reasoner:
                 )
                 return
 
-            for tc in result.tool_calls:
+            for tc in collected_tool_calls:
                 await self.bus.observe(
                     AgentEvent.BeforeToolCall,
                     self.name,
@@ -193,7 +217,7 @@ class Reasoner:
                 AgentEvent.AfterStep, self.name, {"step": step, "final": False}
             )
             yield ThinkingResult(
-                content=result.content or "",
+                content=collected_content or "",
                 records=list(records),
                 steps=step,
                 usage=total_usage,
@@ -207,13 +231,17 @@ class Reasoner:
 
     # ── 内部 ──────────────────────────────────────
 
-    async def _reason_step(
+    async def _stream_reason_step(
         self,
         messages: list[ChatMessage],
         tool_schemas: list[dict[str, Any]] | None,
         step: int,
-    ) -> ReasoningResult:
-        """单步推理：BeforeStep 拦截 → LLM chat_stream → AfterReasoning 拦截。"""
+    ) -> AsyncGenerator[str | ReasoningResult, None]:
+        """单步推理：逐 token yield str 增量，最后 yield ReasoningResult 作为结束信号。
+
+        调用方通过 isinstance(_item, str) 区分 token 增量和结束信号。
+        有 tool_calls 时不会 yield token（LLM 直接输出结构化调用，无文本）。
+        """
         await self.bus.intercept(
             AgentEvent.BeforeStep,
             self.name,
@@ -234,12 +262,16 @@ class Reasoner:
         async for chunk in chunks:
             if chunk.text:
                 collected_content += chunk.text
+                yield chunk.text
             if chunk.tool_calls:
                 collected_tool_calls = chunk.tool_calls
             if chunk.finish_reason:
                 finish_reason = chunk.finish_reason
             if chunk.usage:
                 usage = chunk.usage
+
+        log.debug("stream step=%d content_len=%d finish=%s",
+                  step, len(collected_content), finish_reason)
 
         resp_evt = await self.bus.intercept(
             AgentEvent.AfterReasoning,
@@ -260,7 +292,7 @@ class Reasoner:
             tc for tc in collected_tool_calls if tc.id in raw_ids
         ]
 
-        return ReasoningResult(
+        yield ReasoningResult(
             content=collected_content,
             tool_calls=collected_tool_calls,
             finish_reason=finish_reason,

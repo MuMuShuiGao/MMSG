@@ -64,6 +64,7 @@ class MessageBus:
     async def publish_outbound(self, source: str, payload: dict) -> None:
         """Agent 发布出站消息到分发队列。"""
         await self._outbound.put(BusItem(source=source, payload=payload))
+        self._ensure_dispatch()
 
     def subscribe_outbound(self, pattern: str, handler: OutboundHandler) -> Callable[[], None]:
         """channel 注册出站消息处理器，pattern 匹配 source 字段（fnmatch）。"""
@@ -85,10 +86,15 @@ class MessageBus:
 
     async def _dispatch_loop(self) -> None:
         while True:
-            item = await self._outbound.get()
-            for pat, handler in self._outbound_handlers:
-                if fnmatch.fnmatchcase(item.source, pat):
-                    try:
-                        await handler(item)
-                    except Exception:
-                        log.exception("出站处理器异常: %s", pat)
+            try:
+                item = await self._outbound.get()
+                for pat, handler in self._outbound_handlers:
+                    if fnmatch.fnmatchcase(item.source, pat):
+                        try:
+                            await handler(item)
+                        except Exception:
+                            log.exception("出站处理器异常: %s", pat)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("dispatch loop 异常，继续运行")

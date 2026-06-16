@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -117,7 +118,6 @@ class OpenAIProvider(LLMProvider):
 
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
-        import logging
         _log = logging.getLogger("mmsg.llm")
         _log.debug("LLM request body: %s", body)
 
@@ -128,7 +128,8 @@ class OpenAIProvider(LLMProvider):
                 if resp.status_code != 200:
                     _log.error("LLM HTTP %s: %s", resp.status_code, await resp.aread())
                 resp.raise_for_status()
-                acc: dict[int, tuple[str, str]] = {}  # idx -> (id, name)
+                # idx -> {"id": str, "name": str, "arguments": str}
+                acc: dict[int, dict[str, str]] = {}
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -140,36 +141,47 @@ class OpenAIProvider(LLMProvider):
                     except json.JSONDecodeError:
                         continue
 
-                    choice = chunk.get("choices", [{}])[0]
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        # usage-only chunk（stream_options include_usage）
+                        if chunk.get("usage"):
+                            yield StreamChunk(usage=chunk["usage"])
+                        continue
+                    choice = choices[0]
                     delta = choice.get("delta") or {}
 
                     text = delta.get("content", "")
                     finish = choice.get("finish_reason")
 
-                    tcs: list[ToolCall] = []
+                    # 流式 tool_calls：逐 chunk 累积 id/name/arguments
                     for tc in delta.get("tool_calls") or []:
                         idx = tc.get("index", 0)
                         fn = tc.get("function") or {}
                         if idx not in acc:
-                            acc[idx] = (tc.get("id", ""), fn.get("name", ""))
+                            acc[idx] = {"id": tc.get("id", ""), "name": fn.get("name", ""), "arguments": ""}
                         else:
-                            existing = acc[idx]
                             if tc.get("id"):
-                                existing = (tc.get("id", ""), existing[1])
+                                acc[idx]["id"] = tc["id"]
                             if fn.get("name"):
-                                existing = (existing[0], fn.get("name"))
-                            acc[idx] = existing
-                        if finish:
-                            args_str = fn.get("arguments", "")
+                                acc[idx]["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            acc[idx]["arguments"] += fn["arguments"]
+
+                    # finish chunk 时，从累积数据构建完整 tool_calls
+                    tcs: list[ToolCall] = []
+                    if finish and acc:
+                        for i in sorted(acc):
+                            entry = acc[i]
+                            args_str = entry["arguments"]
                             try:
                                 args = json.loads(args_str) if args_str else {}
                             except json.JSONDecodeError:
                                 args = {}
-                            tcs.append(ToolCall(id=acc[idx][0], name=acc[idx][1], arguments=args))
+                            tcs.append(ToolCall(id=entry["id"], name=entry["name"], arguments=args))
 
                     yield StreamChunk(
                         text=text or None,
-                        tool_calls=tcs if tcs else [],
+                        tool_calls=tcs,
                         finish_reason=finish,
                         usage=chunk.get("usage") or {},
                         done=finish is not None,
