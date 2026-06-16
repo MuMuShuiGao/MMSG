@@ -175,20 +175,26 @@ class Reasoner:
                 return
 
             for tc in collected_tool_calls:
-                await self.bus.observe(
-                    AgentEvent.BeforeToolCall,
-                    self.name,
-                    {"step": step, "id": tc.id, "name": tc.name, "arguments": tc.arguments},
+                tc_payload = {
+                    "step": step, "id": tc.id, "name": tc.name, "arguments": tc.arguments,
+                }
+                tc_evt = await self.bus.intercept(
+                    AgentEvent.BeforeToolCall, self.name, tc_payload
                 )
-                tool = self.tools.get(tc.name)
-                if tool is None:
-                    tool_result: Any = f"错误: 工具 '{tc.name}' 未注册"
+                if tc_evt.payload.get("denied"):
+                    deny_reason = tc_evt.payload.get("deny_reason", "未授权")
+                    tool_result: Any = f"拒绝: {deny_reason}"
                 else:
-                    try:
-                        tool_result = await tool.run(**tc.arguments)
-                    except Exception:
-                        log.exception("工具 %s 执行失败", tc.name)
-                        tool_result = f"错误: 工具 '{tc.name}' 执行异常"
+                    await self.bus.observe(AgentEvent.BeforeToolCall, self.name, tc_evt.payload)
+                    tool = self.tools.get(tc.name)
+                    if tool is None:
+                        tool_result = f"错误: 工具 '{tc.name}' 未注册"
+                    else:
+                        try:
+                            tool_result = await tool.run(**tc.arguments)
+                        except Exception:
+                            log.exception("工具 %s 执行失败", tc.name)
+                            tool_result = f"错误: 工具 '{tc.name}' 执行异常"
 
                 self._history.append(
                     ChatMessage(

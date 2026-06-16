@@ -9,7 +9,7 @@ Turn ─────────────────────────
 │   ├─ LLM 调用
 │   ├─ AfterReasoning       (Interceptor: 改 content/tool_calls)
 │   ├─ for tc in tool_calls:
-│   │     ├─ BeforeToolCall (Observer)
+│   │     ├─ BeforeToolCall (Interceptor: denied→填拒绝 tool msg / Observer: UI 监控)
 │   │     ├─ tool.run()
 │   │     └─ AfterToolCall  (Observer)
 │   └─ AfterStep            (Observer: metrics)

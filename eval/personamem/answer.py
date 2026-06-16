@@ -11,7 +11,6 @@ from mmsg.bus.messagebus import MessageBus
 from mmsg.llm import OpenAIProvider
 from mmsg.prompt.segments import SystemPromptBuilder
 from mmsg.storage import SqliteStore
-from mmsg.tools import EchoTool, NowTool
 
 
 _MCQ_SUFFIX = "\n\n请只输出 A、B、C 或 D 一个字母作为答案。"
@@ -26,7 +25,7 @@ def build_agent(
     agent_bus = AgentBus()
     message_bus = MessageBus()
     store = SqliteStore(workspace_dir / "eval_history.db")
-    tools = {"echo": EchoTool(), "now": NowTool()}
+    tools: dict = {}
 
     return AgentLoop(
         agent_bus=agent_bus,

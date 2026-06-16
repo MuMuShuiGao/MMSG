@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 
 class Tool(ABC):
     name: str = ""
     description: str = ""
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
+    risk: ClassVar[str] = "safe"  # safe | write | network
 
     @abstractmethod
     async def run(self, **kwargs: Any) -> Any: ...
