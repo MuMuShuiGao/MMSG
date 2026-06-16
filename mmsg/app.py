@@ -220,6 +220,14 @@ async def _serve(host: str, port: int) -> None:
         )
         asyncio.create_task(merger.serve())
 
+        # 用户原话 embedding worker（"被惦记"信号源）
+        from .memory.engines.default.message_embedder import MessageEmbedder
+        message_embedder = MessageEmbedder(
+            store=store,
+            embedding_provider=memory.embed_provider,
+        )
+        asyncio.create_task(message_embedder.serve())
+
     channels = await _start_channels(message_bus)
 
     from .dashboard import start_dashboard

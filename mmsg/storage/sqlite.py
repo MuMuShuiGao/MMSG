@@ -66,6 +66,7 @@ class SqliteStore:
                 session_id     TEXT,
                 content        TEXT NOT NULL DEFAULT '',
                 category       TEXT NOT NULL DEFAULT 'curiosity',
+                topic_key      TEXT NOT NULL DEFAULT '',
                 quality        INTEGER NOT NULL DEFAULT 3,
                 needs_research INTEGER NOT NULL DEFAULT 0,
                 status         TEXT NOT NULL DEFAULT 'pending',
@@ -163,7 +164,7 @@ class SqliteStore:
     def get_user_messages_since(self, since_id: int) -> list[dict[str, Any]]:
         """consolidator 用：取 id > since_id 的 role='user' 消息。"""
         rows = self._conn.execute(
-            "SELECT id, content FROM message WHERE id > ? AND role = 'user' ORDER BY id ASC",
+            "SELECT id, content, created_at FROM message WHERE id > ? AND role = 'user' ORDER BY id ASC",
             (since_id,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -174,6 +175,14 @@ class SqliteStore:
             (since_id,),
         ).fetchone()
         return row[0] if row else 0
+
+    def get_recent_user_message_ids(self, limit: int = 50) -> list[int]:
+        """反刍检测用：取最近 N 条 user message id（不含 content）。"""
+        rows = self._conn.execute(
+            "SELECT id FROM message WHERE role = 'user' ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def delete_session(self, session_id: str) -> None:
         self._conn.execute("DELETE FROM message WHERE session_id = ?", (session_id,))
@@ -243,6 +252,10 @@ CREATE INDEX IF NOT EXISTS idx_fact_created_at ON fact(created_at DESC);
 -- Try virtual tables; they are idempotent via IF NOT EXISTS-like behavior
 -- sqlite-vec vec0: won't error if exists, but we guard with a schema_version check
 """,
+        # v2: vec_message virtual table for user message embeddings
+        """
+ALTER TABLE curiosity_note ADD COLUMN topic_key TEXT NOT NULL DEFAULT '';
+""",
     ]
 
     _MIGRATION_VEC: str = """
@@ -259,6 +272,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_fact USING fts5(
 );
 """
 
+    _MIGRATION_VEC_MESSAGE: str = """
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_message USING vec0(
+  message_id INTEGER PRIMARY KEY,
+  embedding FLOAT[1024]
+);
+"""
+
     def _run_migrations(self) -> None:
         cur_ver = self._schema_version
         if cur_ver < 1:
@@ -272,6 +292,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_fact USING fts5(
             except Exception:
                 log.warning("fts_fact 虚表创建失败（可能已存在），跳过")
             self._schema_version = 1
+        if cur_ver < 2:
+            try:
+                self._conn.executescript(self._MIGRATIONS[1])
+            except Exception:
+                log.warning("v2 migration 执行失败（可能列已存在），跳过")
+            try:
+                self._conn.executescript(self._MIGRATION_VEC_MESSAGE)
+            except Exception:
+                log.warning("vec_message 虚表创建失败（可能已存在），跳过")
+            self._schema_version = 2
         self._conn.commit()
 
     @property

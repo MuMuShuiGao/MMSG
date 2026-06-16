@@ -152,16 +152,16 @@ def _build_app(
                 log.exception("[Dashboard] trigger_curiosity failed session=%s", session_id)
                 raise HTTPException(status_code=500, detail=str(e))
 
-        @app.post("/api/curiosity/trigger-consolidate")
-        async def trigger_consolidate() -> dict[str, Any]:
-            """手动触发：立即运行整理 — 通过 Dashboard。"""
-            log.info("[Dashboard] trigger_consolidate")
+        @app.post("/api/curiosity/review-notes")
+        async def trigger_review_curiosity() -> dict[str, Any]:
+            """手动触发：立即整理 pending curiosity notes — 通过 Dashboard。"""
+            log.info("[Dashboard] trigger_review_curiosity")
             try:
-                result = await proactive_engine.trigger_consolidate()
-                log.info("[Dashboard] trigger_consolidate done candidates=%d", result.get("count", 0))
+                result = await proactive_engine.trigger_review_curiosity()
+                log.info("[Dashboard] trigger_review_curiosity done candidates=%d", result.get("count", 0))
                 return {"ok": True, **result}
             except Exception as e:
-                log.exception("[Dashboard] trigger_consolidate failed")
+                log.exception("[Dashboard] trigger_review_curiosity failed")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @app.post("/api/curiosity/simulate-push")

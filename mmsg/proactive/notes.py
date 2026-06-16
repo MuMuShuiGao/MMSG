@@ -19,12 +19,13 @@ class NoteStore:
         for note in notes:
             cur = self._conn.execute(
                 """INSERT INTO curiosity_note
-                   (session_id, content, category, quality, needs_research, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (session_id, content, category, topic_key, quality, needs_research, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     note.session_id,
                     note.content,
                     note.category,
+                    note.topic_key,
                     note.quality,
                     int(note.needs_research),
                     note.status,
@@ -81,6 +82,16 @@ class NoteStore:
         ).fetchone()
         return row[0] if row else None
 
+    def get_pushed_recent(self, hours: int = 24) -> list[CuriosityNote]:
+        """话题冷却用：取最近 N 小时内 pushed 的 note。"""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        rows = self._conn.execute(
+            "SELECT * FROM curiosity_note WHERE status = 'pushed' AND triggered_at >= ? ORDER BY triggered_at DESC",
+            (cutoff,),
+        ).fetchall()
+        return [self._row_to_note(dict(r)) for r in rows]
+
     @staticmethod
     def _row_to_note(row: dict) -> CuriosityNote:
         return CuriosityNote(
@@ -88,6 +99,7 @@ class NoteStore:
             session_id=row.get("session_id"),
             content=row["content"],
             category=row.get("category", "curiosity"),
+            topic_key=row.get("topic_key", ""),
             quality=row.get("quality", 3),
             needs_research=bool(row.get("needs_research", 0)),
             status=row.get("status", "pending"),

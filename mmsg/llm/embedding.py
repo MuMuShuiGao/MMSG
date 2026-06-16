@@ -37,7 +37,6 @@ class OpenAIEmbeddingProvider:
         body = {
             "model": model or self.model,
             "input": texts,
-            "dimensions": self.dimensions,
             "encoding_format": "float",
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
