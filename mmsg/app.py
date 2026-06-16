@@ -15,7 +15,8 @@ from .memory import create_memory
 from .observability import attach_console_sink
 from .prompt.segments import SystemPromptBuilder
 from .storage import SqliteStore
-from .tools import EchoTool, NowTool
+from .tools import HttpGetTool, ListDirTool, ReadFileTool, WriteFileTool
+from .tools.permission import PermissionGate
 from .transport import run_tcp_server
 
 log = logging.getLogger(__name__)
@@ -30,8 +31,10 @@ _OBSERVABLE_TYPES = {
 
 def _register_plugins() -> None:
     """全局一次性注册插件。只在启动时调用一次。"""
-    tool_registry.register("echo")(EchoTool)
-    tool_registry.register("now")(NowTool)
+    tool_registry.register("read_file")(ReadFileTool)
+    tool_registry.register("list_dir")(ListDirTool)
+    tool_registry.register("write_file", workspace=workspace_path())(WriteFileTool)
+    tool_registry.register("http_get")(HttpGetTool)
     llm_registry.register("openai")(OpenAIProvider)
 
 
@@ -142,7 +145,8 @@ async def _serve(host: str, port: int) -> None:
     # 共享基础设施
     store = SqliteStore(workspace_path() / "history.db")
     llm = llm_registry.create("openai")
-    tools = {name: tool_registry.create(name) for name in tool_registry.names()}
+    tools = tool_registry.all()
+    agent_bus.subscribe_intercept(AgentEvent.BeforeToolCall, PermissionGate(tools))
     memory = create_memory()
 
     # Recaller —— 判别器 + hybrid 召回
@@ -244,6 +248,7 @@ async def _serve(host: str, port: int) -> None:
         pass
     finally:
         log.info("正在关闭服务...")
+        await tool_registry.aclose()
         # 先停 channel（特别是飞书的 executor 线程）
         for ch in channels:
             try:
@@ -277,7 +282,8 @@ async def _batch(user_input: str) -> None:
 
     store = SqliteStore(workspace_path() / "history.db")
     llm = llm_registry.create("openai")
-    tools = {name: tool_registry.create(name) for name in tool_registry.names()}
+    tools = tool_registry.all()
+    agent_bus.subscribe_intercept(AgentEvent.BeforeToolCall, PermissionGate(tools))
     memory = create_memory()
     agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory)
     final = ""
@@ -285,3 +291,4 @@ async def _batch(user_input: str) -> None:
         if chunk.done:
             final = chunk.content
     print(final)
+    await tool_registry.aclose()
