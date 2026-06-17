@@ -24,6 +24,7 @@ def _build_app(
     memory: DefaultMarkdownLayer,
     proactive_engine: Any = None,
     memory_curator: Any = None,
+    self_curator: Any = None,
     consolidator: Any = None,
     merger: Any = None,
 ) -> FastAPI:
@@ -97,20 +98,30 @@ def _build_app(
 
     @app.get("/api/memory/knowledge")
     async def get_knowledge() -> dict[str, str]:
-        return {"content": memory.knowledge.read() or ""}
+        return {"content": memory.get_memory_context() or ""}
 
     @app.put("/api/memory/knowledge")
     async def put_knowledge(body: dict[str, str]) -> dict[str, Any]:
-        memory.knowledge.write(body.get("content", ""))
+        memory.write_memory(body.get("content", ""))
         return {"ok": True}
 
     @app.get("/api/memory/context")
     async def get_context() -> dict[str, str]:
-        return {"content": memory.context.read() or ""}
+        return {"content": memory.read_recent_context() or ""}
 
     @app.put("/api/memory/context")
     async def put_context(body: dict[str, str]) -> dict[str, Any]:
+        # TODO: 补 write_recent_context() 公开方法，避免直接访问 private .context
         memory.context.write(body.get("content", ""))
+        return {"ok": True}
+
+    @app.get("/api/memory/self")
+    async def get_self() -> dict[str, str]:
+        return {"content": memory.get_self_context() or ""}
+
+    @app.put("/api/memory/self")
+    async def put_self(body: dict[str, str]) -> dict[str, Any]:
+        memory.write_self(body.get("content", ""))
         return {"ok": True}
 
     # ── Curiosity Notes ──────────────────────────────
@@ -226,6 +237,24 @@ def _build_app(
         async def get_memory_state() -> dict[str, Any]:
             return memory_curator.get_state()
 
+    # ── Self Curator ─────────────────────────────
+
+    if self_curator is not None:
+
+        @app.post("/api/memory/self-curate")
+        async def trigger_self_curate() -> dict[str, Any]:
+            log.info("[Dashboard] trigger_self_curate")
+            try:
+                result = await self_curator.trigger_curate()
+                return result
+            except Exception as e:
+                log.exception("[Dashboard] trigger_self_curate failed")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.get("/api/memory/self-state")
+        async def get_self_state() -> dict[str, Any]:
+            return self_curator.get_state()
+
     # ── Consolidator / Merger 状态 ─────────────────
 
     @app.get("/api/memory/workers-state")
@@ -253,6 +282,7 @@ async def start_dashboard(
     port: int = 9876,
     proactive_engine: Any = None,
     memory_curator: Any = None,
+    self_curator: Any = None,
     consolidator: Any = None,
     merger: Any = None,
 ) -> None:
@@ -275,7 +305,7 @@ async def start_dashboard(
         log.warning("Dashboard requires SqliteStore. Sessions tab disabled.")
         return
 
-    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator, consolidator=consolidator, merger=merger)
+    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator, self_curator=self_curator, consolidator=consolidator, merger=merger)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     log.info("Dashboard → http://127.0.0.1:%d", port)

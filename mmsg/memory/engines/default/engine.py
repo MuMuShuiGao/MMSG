@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ...protocol import MarkdownMemoryLayer, MemoryEngine, MemoryRuntime
+from ...templates import SELF_MD_TEMPLATE
 from .markdown_file import MarkdownFile
 from .vector_store import VectorStore
 
@@ -21,6 +22,7 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
         self.memory_dir = memory_dir
         self.context = MarkdownFile(memory_dir / "current_context.md", default="# 近期摘要\n")
         self.knowledge = MarkdownFile(memory_dir / "memory.md")
+        self.self_file = MarkdownFile(memory_dir / "self.md", default=SELF_MD_TEMPLATE)
 
     def get_memory_context(self) -> str | None:
         return self.knowledge.read()
@@ -30,6 +32,12 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
 
     def write_memory(self, content: str) -> None:
         self.knowledge.write(content)
+
+    def get_self_context(self) -> str | None:
+        return self.self_file.read()
+
+    def write_self(self, content: str) -> None:
+        self.self_file.write(content)
 
     async def consolidate(self, messages: list) -> None:
         """短期摘要：委托 RecentRecapper 压缩对话 → current_context.md。"""

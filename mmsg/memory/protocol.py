@@ -20,17 +20,27 @@ class MarkdownMemoryLayer(ABC):
 
     @abstractmethod
     def get_memory_context(self) -> str | None:
-        """读取长期记忆 (MEMORY.md)。"""
+        """读取长期记忆 (memory.md)。"""
         ...
 
     @abstractmethod
     def read_recent_context(self) -> str | None:
-        """读取近期摘要 (RECENT_CONTEXT.md / current_context.md)。"""
+        """读取近期摘要 (current_context.md)。"""
         ...
 
     @abstractmethod
     def write_memory(self, content: str) -> None:
         """写入长期记忆。"""
+        ...
+
+    @abstractmethod
+    def get_self_context(self) -> str | None:
+        """读取自我认知 (self.md)。"""
+        ...
+
+    @abstractmethod
+    def write_self(self, content: str) -> None:
+        """写入自我认知。"""
         ...
 
     @abstractmethod
@@ -77,12 +87,15 @@ class MemoryRuntime:
         return self.engine.embed_provider if self.engine else None
 
     def build_context_block(self) -> str:
-        """返回长期记忆 + 近期摘要的拼接字符串块。
+        """返回自我认知 + 长期记忆 + 近期摘要的拼接字符串块。
 
         所有 LLM 调用的 system prompt 前置注入用。
         若无内容则返回空字符串。
         """
         parts: list[str] = []
+        self_ctx = self.markdown.get_self_context()
+        if self_ctx:
+            parts.append(f"# 自我认知\n\n{self_ctx}")
         mem = self.markdown.get_memory_context()
         if mem:
             parts.append(f"# 长期记忆\n\n{mem}")

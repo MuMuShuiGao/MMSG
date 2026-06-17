@@ -43,6 +43,7 @@ def build_workspace(workspace: Path) -> str:
 ## 工作区
 
 - 根目录：{root}
+- 自我认知：{root}/memory/self.md
 - 长期记忆：{root}/memory/MEMORY.md
 - 近期语境摘要：{root}/memory/RECENT_CONTEXT.md
 """

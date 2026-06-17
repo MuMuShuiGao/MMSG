@@ -123,6 +123,22 @@ class SessionMixin:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_messages_since(self, since_id: int, roles: list[str] | None = None) -> list[dict[str, Any]]:
+        """SelfCurator 用：取 id > since_id 的双方消息，roles 为空则取全部。"""
+        if roles:
+            placeholders = ",".join("?" * len(roles))
+            rows = self._conn.execute(
+                f"SELECT id, role, content, created_at FROM message "
+                f"WHERE id > ? AND role IN ({placeholders}) ORDER BY id ASC",
+                [since_id, *roles],
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, role, content, created_at FROM message WHERE id > ? ORDER BY id ASC",
+                (since_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def count_user_messages_since(self, since_id: int) -> int:
         row = self._conn.execute(
             "SELECT COUNT(*) FROM message WHERE id > ? AND role = 'user'",

@@ -449,28 +449,35 @@ function UsageView() {
 function MemoryView() {
   const [knowledge, setKnowledge] = useState("");
   const [context, setContext] = useState("");
+  const [self, setSelf] = useState("");
   const [knowledgeDirty, setKnowledgeDirty] = useState(false);
   const [contextDirty, setContextDirty] = useState(false);
+  const [selfDirty, setSelfDirty] = useState(false);
   const [curatorState, setCuratorState] = useState(null);
+  const [selfCuratorState, setSelfCuratorState] = useState(null);
   const [workersState, setWorkersState] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadAll = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [k, c, cur, wrk] = await Promise.all([
+      const [k, c, s, cur, selfCur, wrk] = await Promise.all([
         api("/api/memory/knowledge").catch(() => ({content:""})),
         api("/api/memory/context").catch(() => ({content:""})),
+        api("/api/memory/self").catch(() => ({content:""})),
         api("/api/memory/state").catch(() => null),
+        api("/api/memory/self-state").catch(() => null),
         api("/api/memory/workers-state").catch(() => null),
       ]);
       if (!knowledgeDirty) setKnowledge(k.content);
       if (!contextDirty) setContext(c.content);
+      if (!selfDirty) setSelf(s.content);
       setCuratorState(cur);
+      setSelfCuratorState(selfCur);
       setWorkersState(wrk);
     } catch(e) {}
     finally { setRefreshing(false); }
-  }, [knowledgeDirty, contextDirty]);
+  }, [knowledgeDirty, contextDirty, selfDirty]);
 
   useEffect(() => { loadAll(); }, []);
 
@@ -484,6 +491,12 @@ function MemoryView() {
     await api("/api/memory/context", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({content: context}) });
     setContextDirty(false);
     toast("上下文已保存");
+  };
+
+  const saveSelf = async () => {
+    await api("/api/memory/self", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({content: self}) });
+    setSelfDirty(false);
+    toast("自我认知已保存");
   };
 
   const handleKeyDown = (saveFn, setDirty) => e => {
@@ -500,6 +513,7 @@ function MemoryView() {
   );
 
   const cur = curatorState || {};
+  const selfCur = selfCuratorState || {};
   const con = (workersState && workersState.consolidator) || {};
   const mer = (workersState && workersState.merger) || {};
 
@@ -515,12 +529,43 @@ function MemoryView() {
             cursor: refreshing ? "wait" : "pointer", fontSize:12, fontWeight:600,
             transition: "all .2s cubic-bezier(.34,1.4,.64,1)"}}
         >{refreshing ? "刷新中..." : "刷新"}</button>
+        <button
+          onClick={async () => {
+            try {
+              await api("/api/memory/curate", {method:"POST"});
+              toast("长期策展已触发");
+              setTimeout(loadAll, 800);
+            } catch { toast("触发失败"); }
+          }}
+          style={{padding:"6px 14px",borderRadius:9,border:"none",
+            background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",
+            cursor:"pointer",fontSize:12,fontWeight:600,
+            transition:"all .2s cubic-bezier(.34,1.4,.64,1)"}}
+        >触发长期策展</button>
+        <button
+          onClick={async () => {
+            try {
+              await api("/api/memory/self-curate", {method:"POST"});
+              toast("自我认知策展已触发");
+              setTimeout(loadAll, 800);
+            } catch { toast("触发失败"); }
+          }}
+          style={{padding:"6px 14px",borderRadius:9,border:"none",
+            background:"linear-gradient(135deg,#7c3aed,#db2777)",color:"#fff",
+            cursor:"pointer",fontSize:12,fontWeight:600,
+            transition:"all .2s cubic-bezier(.34,1.4,.64,1)"}}
+        >触发自我策展</button>
       </div>
       <div className="usage-cards" style={{padding:"12px 22px 0 22px"}}>
         {buildCard("🧠 长期策展", [
           `最后处理 ID: ${cur.last_curated_id ?? "—"}`,
           `重试次数: ${cur.retry_count ?? 0}`,
           `上次运行: ${cur.last_run_at ? fmtTs(cur.last_run_at) : "—"}`,
+        ])}
+        {buildCard("🪞 自我认知策展", [
+          `最后处理 ID: ${selfCur.last_curated_id ?? "—"}`,
+          `重试次数: ${selfCur.retry_count ?? 0}`,
+          `上次运行: ${selfCur.last_run_at ? fmtTs(selfCur.last_run_at) : "—"}`,
         ])}
         {buildCard("📝 事实提取", [
           `最后处理 ID: ${con.last_consolidated_id ?? "—"}`,
@@ -532,6 +577,19 @@ function MemoryView() {
         ])}
       </div>
       <div className="memory-panel" style={{flex:1}}>
+        <div className="memory-col">
+          <h3>
+            🪞 自我认知 / self.md
+            <button onClick={saveSelf} disabled={!selfDirty} style={selfDirty ? {} : {opacity:.5}}>保存</button>
+          </h3>
+          <textarea
+            value={self}
+            onChange={e => { setSelf(e.target.value); setSelfDirty(true); }}
+            onKeyDown={handleKeyDown(saveSelf, setSelfDirty)}
+            placeholder="暂无自我认知..."
+            spellCheck={false}
+          />
+        </div>
         <div className="memory-col">
           <h3>
             📚 长期记忆 / memory.md
@@ -958,6 +1016,189 @@ function CuriosityView() {
   );
 }
 
+// ── Write Paths Tab ──
+function WritePathsView() {
+  const md = `# 写入路径总览
+
+8 条写入路径均从 \`message\` 表衍生，核心三层：
+
+- **短期摘要**（\`current_context.md\`）：RecentRecapper 被动快照，给 agent 看「上次聊到哪」。
+- **长期记忆**（\`memory.md\`）：MemoryCurator worker 用户画像，软上限 4000 字。
+- **自我认知**（\`self.md\`）：SelfCurator worker，MMSG 自我定位与关系认知，上限 2000 字。
+- **向量事实**（\`fact\` 表）：consolidator worker 直接从 user 原话提取 → embedding（\`vec_fact\` 虚表），供 Recaller 语义召回。
+- **主动议程**（\`curiosity_note\` 表）：主动引擎 15min 周期生成，含 24h 冷却 + 反刍检测。
+
+\`\`\`
+message（raw，双方）
+  ├─→ vec_message         user 原话 embedding（话题热度 + 反刍检测）
+  ├─→ current_context.md  短期摘要
+  ├─→ curiosity_note      主动议程 → push 状态
+  ├─→ memory.md           长期用户画像
+  │    └─→ fact + vec_fact（直接从 user 原话提取，独立水位）
+  └─→ self.md             自我认知与关系
+\`\`\`
+
+## memory.md 写入路径
+
+\`\`\`
+输入
+  [user]      所有对话原话（提取来源）
+  [assistant] 所有对话原话（提供上下文，不直接写入）
+
+       ↓  MemoryCurator（≥5 条新消息 或 距上次 ≥6h）
+       ↓  MEMORY_CURATION_SYSTEM_PROMPT
+       ↓  LLM → JSON { memory, added, removed, note }
+
+输出
+  memory.md   只写 [user] 明确表达的行动、经历、计划、状态
+              [assistant] 的建议、推荐、解释一律不写入
+              固定四节：身份与项目 / 偏好 / 生活与关系 / 长期关注
+              软上限 4000 字，超出合并或删除过时条目
+\`\`\`
+
+## self.md 写入路径
+
+\`\`\`
+输入
+  [user]      所有对话原话（提取来源）
+  [assistant] 所有对话原话（提供上下文，不直接写入）
+
+       ↓  SelfCurator（≥5 条新消息 或 距上次 ≥6h）
+       ↓  SELF_CURATION_SYSTEM_PROMPT
+       ↓  LLM → JSON { self, added, removed, note }
+
+输出
+  self.md     只从 [user] 明确表达提炼 MMSG 的主观认知
+              [assistant] 的建议、推荐、解释一律不写入
+              固定三节（标题不可改）：
+                ## 关于我自己
+                ## 我眼中的用户
+                ## 我们的相处关系
+              软上限 2000 字，超出合并或删除过时内容
+\`\`\`
+
+## current_context.md 写入路径
+
+\`\`\`
+输入
+  [user]      对话原话（提取来源）
+  [assistant] 对话原话（提供上下文，不直接写入）
+
+       ↓  RecentRecapper（滑动窗口每满 summarize_every 轮触发，fire-and-forget）
+       ↓  内联 prompt（5 字段 JSON：持续关注 / 明确偏好 / 待延续话题 / 避免事项 / 前置背景）
+       ↓  LLM → JSON { 持续关注, 明确偏好, 待延续话题, 避免事项, 前置背景 }
+
+输出
+  current_context.md  覆盖写入，只保留最新一条 [MM-DD HH:MM] 快照
+                      内容：5 字段，每字段 ≤40 字
+\`\`\`
+
+## fact 写入路径
+
+\`\`\`
+输入
+  message（role=user）  原话增量（consolidator 独立水位跟踪）
+
+       ↓  Consolidator（≥10 条新 user 消息 或 距上次 ≥2h，独立后台 worker）
+       ↓  _CONSOLIDATION_SYSTEM_PROMPT
+       ↓  LLM → JSON { facts: ["用户在...", ...] }
+
+       ↓  embedding（text-embedding 模型，批量）
+       ↓  insert_facts_batch → fact 表 + vec_fact 虚表
+          （无去重，同批内容幂等由水位保证；跨批相似度去重由 Recaller 侧处理）
+
+输出
+  fact 表     每行一条原子事实，含 source_message_ids / mention_count
+  vec_fact    虚表（sqlite-vec），供 Recaller 语义召回
+              直接从 user 原话提取，不经 memory.md
+\`\`\`
+
+## curiosity_note 写入路径
+
+\`\`\`
+输入
+  message（role=user/assistant）  近期对话（增量水位 last_note_generated_message_id）
+  memory.md                       用户画像（CURIOSITY_PROMPT 注入参考）
+
+       ↓  主动引擎（15min 周期轮询，_generate_notes_from_recent）
+       ↓  CURIOSITY_PROMPT（+ memory context block）
+       ↓  LLM → JSON [ { content, category, topic_key, quality } ]，每批最多 3 条
+
+       整理阶段（同周期，_review_curiosity_notes）：
+         CONSOLIDATE_PROMPT → LLM 重新打分 / 合并 / 标 dismissed
+         mentions_recent：topic_key embedding 搜 vec_message（7d 窗口）
+       
+       推送决策：
+         冷却检查：topic_key embedding 与 24h 内 pushed note 的 topic_key 相似度 > 0.85 → 跳过
+         反刍检测：topic_key embedding 搜 vec_message（最近 50 条 user 原话），命中 → 跳过
+         should_push(quality, hours_since_active, pushed_today)
+
+输出
+  curiosity_note 表   含 content / category / topic_key / quality / needs_research
+                      状态流转：pending → pushed（→ dismissed 由整理阶段标记）
+\`\`\`
+
+## 注入
+
+\`MemoryRuntime.build_context_block()\` 统一拼「自我认知 → 长期记忆 → 短期摘要」，注入所有 LLM 调用。`;
+
+  const renderMd = raw => {
+    const lines = raw.split("\n");
+    const els = [];
+    let inCode = false;
+    let codeBuf = [];
+    let codeKey = 0;
+    const pushCode = () => {
+      if (codeBuf.length === 0) return;
+      els.push(<pre key={"c"+codeKey++} style={{background:"rgba(15,23,42,.04)",borderRadius:10,padding:"14px 18px",fontSize:12,fontFamily:"'Fira Code','Cascadia Code',Consolas,Monaco,monospace",lineHeight:1.9,color:"#334155",overflowX:"auto",whiteSpace:"pre",margin:"12px 0"}}>{codeBuf.join("\n")}</pre>);
+      codeBuf = [];
+    };
+    const inline = s => {
+      const parts = s.split(/(`[^`]+`)/g);
+      return parts.map((p, i) => {
+        if (p.startsWith("`") && p.endsWith("`")) return <code key={i} style={{background:"rgba(124,58,237,.08)",padding:"1px 6px",borderRadius:4,color:"#7c3aed",fontSize:12}}>{p.slice(1,-1)}</code>;
+        const boldParts = p.split(/(\*\*[^*]+\*\*)/g);
+        return boldParts.map((bp, j) => {
+          if (bp.startsWith("**") && bp.endsWith("**")) return <strong key={`${i}-${j}`}>{bp.slice(2,-2)}</strong>;
+          return bp;
+        });
+      });
+    };
+    lines.forEach((line, li) => {
+      if (line.startsWith("```")) {
+        if (inCode) { pushCode(); inCode = false; }
+        else { inCode = true; }
+        return;
+      }
+      if (inCode) { codeBuf.push(line); return; }
+      pushCode();
+      if (/^###?\s/.test(line)) {
+        const level = line.startsWith("###") ? 3 : line.startsWith("##") ? 2 : 1;
+        const text = line.replace(/^#+\s/, "");
+        const sizes = {1:18, 2:16, 3:14};
+        const margins = {1:"22px 0 12px", 2:"20px 0 8px", 3:"16px 0 6px"};
+        els.push(<div key={li} style={{fontSize:sizes[level],fontWeight:700,color:"#1e293b",margin:margins[level],paddingBottom: level<=2 ? 6 : 0, borderBottom: level<=2 ? "1px solid rgba(148,163,184,.15)" : "none"}}>{inline(text)}</div>);
+      } else if (/^-\s/.test(line)) {
+        els.push(<div key={li} style={{fontSize:13,color:"#475569",lineHeight:2,paddingLeft:12}}>• {inline(line.replace(/^-\s/, ""))}</div>);
+      } else if (line.trim() === "") {
+        els.push(<div key={li} style={{height:6}} />);
+      } else {
+        els.push(<div key={li} style={{fontSize:13,color:"#475569",lineHeight:1.9}}>{inline(line)}</div>);
+      }
+    });
+    pushCode();
+    return els;
+  };
+
+  return (
+    <div style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"fadeUp .4s ease both"}}>
+      <div style={{maxWidth:860,margin:"0 auto"}}>
+        {renderMd(md)}
+      </div>
+    </div>
+  );
+}
+
 // ── App ──
 function App() {
   const [tab, setTab] = useState("sessions");
@@ -972,9 +1213,10 @@ function App() {
           <button className={`tab${tab==="usage"?" active":""}`} onClick={()=>setTab("usage")}>📊 Usage</button>
           <button className={`tab${tab==="memory"?" active":""}`} onClick={()=>setTab("memory")}>🧠 Memory</button>
           <button className={`tab${tab==="curiosity"?" active":""}`} onClick={()=>setTab("curiosity")}>💭 Curiosity</button>
+          <button className={`tab${tab==="writepaths"?" active":""}`} onClick={()=>setTab("writepaths")}>📐 写入路径</button>
         </div>
       </div>
-      {tab === "sessions" ? <SessionsView /> : tab === "messages" ? <MessagesView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : <CuriosityView />}
+      {tab === "sessions" ? <SessionsView /> : tab === "messages" ? <MessagesView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : tab === "curiosity" ? <CuriosityView /> : <WritePathsView />}
     </>
   );
 }
