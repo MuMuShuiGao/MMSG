@@ -62,8 +62,15 @@ def _build_app(
     # ── Messages ────────────────────────────────────
 
     @app.get("/api/messages")
-    async def list_messages(offset: int = 0, limit: int = 100) -> dict[str, Any]:
-        rows, total = store.list_messages_paginated(offset=offset, limit=limit)
+    async def list_messages(
+        offset: int = 0,
+        limit: int = 100,
+        role: str | None = None,
+        q: str | None = None,
+    ) -> dict[str, Any]:
+        rows, total = store.list_messages_paginated(
+            offset=offset, limit=limit, role=role, q=q,
+        )
         for m in rows:
             meta_raw = m.get("meta")
             if isinstance(meta_raw, str):

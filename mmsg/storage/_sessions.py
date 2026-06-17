@@ -93,14 +93,25 @@ class SessionMixin:
         return [dict(r) for r in rows]
 
     def list_messages_paginated(
-        self, offset: int = 0, limit: int = 100
+        self, offset: int = 0, limit: int = 100, role: str | None = None, q: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        total = self._conn.execute("SELECT COUNT(*) FROM message").fetchone()[0]
+        conditions = []
+        params: list[Any] = []
+        if role:
+            conditions.append("m.role = ?")
+            params.append(role)
+        if q:
+            conditions.append("m.content LIKE ?")
+            params.append(f"%{q}%")
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        total = self._conn.execute(
+            f"SELECT COUNT(*) FROM message m{where}", params
+        ).fetchone()[0]
         rows = self._conn.execute(
-            "SELECT m.*, s.title as session_title, s.source as session_source "
-            "FROM message m LEFT JOIN session s ON m.session_id = s.id "
-            "ORDER BY m.id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT m.*, s.title as session_title, s.source as session_source "
+            f"FROM message m LEFT JOIN session s ON m.session_id = s.id"
+            f"{where} ORDER BY m.id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ).fetchall()
         return [dict(r) for r in rows], total
 
