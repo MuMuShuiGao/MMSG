@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 from ..bus.messagebus import MessageBus, OutboundItem
+from ..bus.eventbus import Event
 
 log = logging.getLogger("mmsg.channel.feishu")
 
@@ -44,10 +45,37 @@ _CreateMessageRequestBody: Any = None
 _PatchMessageRequest: Any = None
 _PatchMessageRequestBody: Any = None
 
-# 流式编辑限制：保留第 19 次给 done=True，中间最多用 18 次
-_MAX_EDITS_PER_MESSAGE = 20
-_STREAM_MAX_INTERMEDIATE = 10   # 中间流式 PATCH 最多次数（留额度给 done=True）
+_STREAM_MAX_INTERMEDIATE = 10   # 中间流式 PATCH 最多次数
 _STREAM_THROTTLE_SECS = 0.7    # 中间 PATCH 最小间隔（秒）
+
+# 工具名 → emoji 映射（精确匹配项目注册的工具名）
+_TOOL_EMOJI: dict[str, str] = {
+    "read_file": "📄",
+    "write_file": "✏️",
+    "list_dir": "📁",
+    "http_get": "🌐",
+}
+_DEFAULT_TOOL_EMOJI = "🔧"
+_MAX_TOOL_LINES = 12
+
+
+def _tool_emoji(name: str) -> str:
+    return _TOOL_EMOJI.get(name, _DEFAULT_TOOL_EMOJI)
+
+
+def _fmt_args(arguments: dict | str) -> str:
+    """取参数摘要，截断到 60 字符。"""
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except Exception:
+            return str(arguments)[:60]
+    if not arguments:
+        return ""
+    # 取第一个值作为摘要
+    first_val = next(iter(arguments.values()), "")
+    s = str(first_val)
+    return s[:60] + ("…" if len(s) > 60 else "")
 
 
 def _import_lark_rest():
@@ -66,11 +94,163 @@ def _import_lark_rest():
     )
 
 
+# ── 卡片构建 ──────────────────────────────────────────────────────────────────
+
+def _build_tool_lines(tools: list[dict]) -> str:
+    """把工具列表格式化为 markdown 行列表。"""
+    visible = tools[-_MAX_TOOL_LINES:]
+    hidden = len(tools) - len(visible)
+    lines = []
+    for t in visible:
+        emoji = _tool_emoji(t["name"])
+        status = t.get("status", "running")
+        if status == "done":
+            status_icon = "✅"
+        elif status == "error":
+            status_icon = "✗"
+        else:
+            status_icon = "⏳"
+        args_str = _fmt_args(t.get("arguments", {}))
+        arg_part = f' "{args_str}"' if args_str else ""
+        lines.append(f"{emoji} **{t['name']}**{arg_part} {status_icon}")
+    if hidden:
+        lines.append(f"_… {hidden} more_")
+    all_done = all(t.get("status") in ("done", "error") for t in tools)
+    if tools and all_done:
+        lines.append(f"**Done · {len(tools)} tools**")
+    return "\n".join(lines)
+
+
+def _build_live_card(thinking: str, tools: list[dict]) -> dict:
+    """构造 live 状态飞书卡片（Schema 2.0）。
+
+    两个区域：💭 思考过程（流式展开）/ 🔧 工具调用时间线（有工具时展示）
+    """
+    elements: list[dict] = []
+
+    # 💭 思考过程（流式文本，截断展示最近 1200 字）
+    if thinking:
+        elements.append({
+            "tag": "collapsible_panel",
+            "expanded": True,
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": "💭 思考过程",
+                },
+                "padding": "4px 0px 4px 0px",
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": thinking[-1200:],
+                    },
+                }
+            ],
+        })
+
+    # 🔧 工具调用时间线
+    if tools:
+        tool_md = _build_tool_lines(tools)
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**🔧 工具调用**\n{tool_md}",
+            },
+        })
+
+    if not elements:
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "_正在生成..._",
+            },
+        })
+
+    return {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True, "enable_forward": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "正在思考…"},
+            "template": "wathet",
+        },
+        "body": {"elements": elements},
+    }
+
+
+def _build_summary_card(thinking: str, tools: list[dict], final_reply: str) -> dict:
+    """构造 summary 状态卡片：思考折叠，工具时间线保留，正文展开。"""
+    elements: list[dict] = []
+
+    # 💭 思考折叠
+    if thinking:
+        elements.append({
+            "tag": "collapsible_panel",
+            "expanded": False,
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": "💭 思考过程",
+                },
+                "padding": "4px 0px 4px 0px",
+            },
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": thinking,
+                    },
+                }
+            ],
+        })
+
+    # 🔧 工具时间线（展开可见）
+    if tools:
+        tool_md = _build_tool_lines(tools)
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**🔧 工具调用**\n{tool_md}",
+            },
+        })
+
+    if elements:
+        elements.append({"tag": "hr"})
+
+    # 最终回复
+    elements.append({
+        "tag": "div",
+        "text": {
+            "tag": "lark_md",
+            "content": final_reply or "（无回复）",
+        },
+    })
+
+    return {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True, "enable_forward": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "✅ 已完成"},
+            "template": "green",
+        },
+        "body": {"elements": elements},
+    }
+
+
+# ── Channel ───────────────────────────────────────────────────────────────────
+
 class FeishuChannel:
     """飞书 Bot WebSocket 通道。
 
     - 通过 WS 长连接接收用户消息
     - 通过 REST API 以交互卡片形式流式发送回复
+    - 订阅 message_bus.events 监听工具开始/完成事件，实时刷新卡片
     - source 命名：feishu:{open_id}
     """
 
@@ -84,8 +264,24 @@ class FeishuChannel:
         self._shutdown = threading.Event()   # 通知 executor 线程退出
         self._ws_client_ref: Any = None      # lark_oapi WsClient 引用，用于 stop 时控制
         self._ws_loop_ref: Any = None        # WS 线程内的事件循环
-        # 流式卡片状态：chat_id → {message_id, edit_count, last_edit_ts}
+
+        # 流式卡片状态：chat_id → LiveState
         self._streams: dict[str, dict[str, Any]] = {}
+        # 当前正在处理的 chat_id（单用户/顺序模式）
+        self._active_chat_id: str = ""
+
+    # ── LiveState helpers ──────────────────────────────
+
+    def _get_or_create_live(self, chat_id: str) -> dict[str, Any]:
+        if chat_id not in self._streams:
+            self._streams[chat_id] = {
+                "message_id": None,
+                "edit_count": 0,
+                "last_edit_ts": 0.0,
+                "thinking": "",
+                "tools": [],       # list of {id, name, arguments, status}
+            }
+        return self._streams[chat_id]
 
     # ── Lifecycle ────────────────────────────────────
 
@@ -94,6 +290,10 @@ class FeishuChannel:
 
         self._loop = asyncio.get_running_loop()
         self._bus.subscribe_outbound("feishu:*", self._on_outbound)
+
+        # 订阅工具事件（已由 app.py _bridge_observable 桥接到 message_bus.events）
+        self._bus.events.subscribe("before_tool_call", self._on_tool_started)
+        self._bus.events.subscribe("after_tool_call", self._on_tool_completed)
 
         # REST client — 用于发送消息（内部自动管理 tenant_access_token）
         self._rest_client = _lark_Client.builder() \
@@ -301,84 +501,123 @@ class FeishuChannel:
         except Exception:
             log.exception("处理飞书消息事件异常")
 
+    # ── 工具事件处理（主事件循环内调用）─────────────
+
+    async def _on_tool_started(self, evt: Event) -> None:
+        """BeforeToolCall 事件 → 在工具时间线新增一行（running 状态）。"""
+        chat_id = self._active_chat_id
+        if not chat_id:
+            return
+        state = self._get_or_create_live(chat_id)
+        name = evt.payload.get("name", "unknown")
+        arguments = evt.payload.get("arguments", {})
+        tc_id = evt.payload.get("id", "")
+        state["tools"].append({
+            "id": tc_id,
+            "name": name,
+            "arguments": arguments,
+            "status": "running",
+        })
+        await self._patch_live_card(chat_id)
+
+    async def _on_tool_completed(self, evt: Event) -> None:
+        """AfterToolCall 事件 → 更新对应条目状态为 done/error。"""
+        chat_id = self._active_chat_id
+        if not chat_id:
+            return
+        state = self._get_or_create_live(chat_id)
+        tc_id = evt.payload.get("id", "")
+        result = evt.payload.get("result", "")
+        is_error = str(result).startswith("错误:")
+        for tool in state["tools"]:
+            if tool["id"] == tc_id:
+                tool["status"] = "error" if is_error else "done"
+                break
+        await self._patch_live_card(chat_id)
+
+    # ── 卡片刷新 ─────────────────────────────────────
+
+    async def _patch_live_card(self, chat_id: str) -> None:
+        """强制刷新 live 卡片（工具事件触发，不受限频）。"""
+        state = self._streams.get(chat_id)
+        if not state or not state.get("message_id"):
+            return
+        card = _build_live_card(state["thinking"], state["tools"])
+        await self._update_card(state["message_id"], card)
+
     # ── Outbound handler（主事件循环内调用）──────────
 
     async def _on_outbound(self, item: OutboundItem) -> None:
         """收到 Agent 回复 → 调用飞书 REST API 流式发送/编辑卡片消息。
 
         流式策略：
-        - done=False 首条 → POST create 卡片，存入 message_id
-        - done=False 后续 → 限频 PATCH（间隔 ≥ 0.8s，中间最多 6 次）
-        - done=True   → 始终 PATCH 已有卡片（无论 edit_count）；无记录则 create
+        - done=False 首条 → POST create live 卡片，存入 message_id
+        - done=False 后续 → 限频 PATCH live 卡片（间隔 ≥ throttle）
+        - done=True   → PATCH summary 卡片（思考折叠 + 最终回复）；无记录则直接 create
         """
         open_id = item.payload.get("open_id")
         chat_id = item.payload.get("chat_id", "")
         text = item.payload.get("text", "")
         done = item.payload.get("done", True)
 
-        if not open_id or not chat_id or not text:
-            log.warning("outbound 缺失字段，跳过: open_id=%s chat_id=%s text_empty=%s",
-                        open_id, chat_id, not text)
+        if not open_id or not chat_id:
+            log.warning("outbound 缺失字段，跳过: open_id=%s chat_id=%s", open_id, chat_id)
             return
         if not item.source.startswith("feishu:"):
             return
+        # done=True 且无文本：无意义，跳过
+        if done and not text:
+            return
 
-        # 以 chat_id 为流式 key，避免同一 open_id 跨多个会话互相覆盖卡片
-        stream = self._streams.get(chat_id)
+        # 记录当前活跃 chat_id，供工具事件关联
+        self._active_chat_id = chat_id
+
+        state = self._get_or_create_live(chat_id)
 
         if not done:
-            # ── 中间 chunk：限频流式刷新卡片 ──
-            if stream is None:
-                # 首次：创建卡片，记录 message_id
-                msg_id = await self._create_card(chat_id, text, done=False)
+            # done=False 时的 text 就是流式思考/生成文本
+            state["thinking"] = text
+
+            if state["message_id"] is None:
+                # 首次：创建 live 卡片
+                card = _build_live_card(text, state["tools"])
+                msg_id = await self._create_card(chat_id, card)
                 if msg_id:
-                    self._streams[chat_id] = {
-                        "message_id": msg_id,
-                        "edit_count": 0,
-                        "last_edit_ts": 0.0,
-                    }
+                    state["message_id"] = msg_id
+                    state["edit_count"] = 0
+                    state["last_edit_ts"] = 0.0
             else:
-                # 限频：中间 PATCH 留最后一次额度给 done=True
+                # 限频 PATCH
                 now = time.monotonic()
-                since_last = now - stream.get("last_edit_ts", 0.0)
-                under_limit = stream["edit_count"] < _STREAM_MAX_INTERMEDIATE
+                since_last = now - state.get("last_edit_ts", 0.0)
+                under_limit = state["edit_count"] < _STREAM_MAX_INTERMEDIATE
                 if under_limit and since_last >= _STREAM_THROTTLE_SECS:
-                    await self._update_card(stream["message_id"], text, done=False)
-                    stream["edit_count"] += 1
-                    stream["last_edit_ts"] = now
-                # 否则：跳过本次，等下一个 chunk 或 done=True
+                    card = _build_live_card(text, state["tools"])
+                    await self._update_card(state["message_id"], card)
+                    state["edit_count"] += 1
+                    state["last_edit_ts"] = now
         else:
-            # ── 最终 chunk：始终 PATCH 已有卡片，永不新建第二张 ──
-            if stream is not None:
-                await self._update_card(stream["message_id"], text, done=True)
+            # 最终：PATCH summary 卡片
+            self._active_chat_id = ""
+            final_text = text
+            if state["message_id"] is not None:
+                card = _build_summary_card(state["thinking"], state["tools"], final_text)
+                await self._update_card(state["message_id"], card)
                 self._streams.pop(chat_id, None)
             else:
-                # 无流式记录（单步直接回复），直接创建卡片
-                await self._create_card(chat_id, text, done=True)
+                # 无流式记录（直接单步回复）
+                card = _build_summary_card("", [], final_text)
+                await self._create_card(chat_id, card)
 
-    def _build_card(self, text: str, done: bool) -> dict:
-        """构造飞书卡片消息内容（Card Schema 1.0）。"""
-        return {
-            "config": {"wide_screen_mode": True},
-            "header": {
-                "title": {"tag": "plain_text", "content": "已完成" if done else "正在生成..."},
-                "template": "blue" if done else "wathet",
-            },
-            "elements": [
-                {
-                    "tag": "div",
-                    "text": {"tag": "lark_md", "content": text},
-                }
-            ],
-        }
+    # ── REST 发送/编辑 ────────────────────────────────
 
-    async def _create_card(self, chat_id: str, text: str, done: bool) -> str | None:
+    async def _create_card(self, chat_id: str, card: dict) -> str | None:
         """发送一条交互卡片消息，返回 message_id。"""
         try:
             body = _CreateMessageRequestBody.builder() \
                 .receive_id(chat_id) \
                 .msg_type("interactive") \
-                .content(json.dumps(self._build_card(text, done), ensure_ascii=False)) \
+                .content(json.dumps(card, ensure_ascii=False)) \
                 .build()
 
             request = _CreateMessageRequest.builder() \
@@ -386,7 +625,7 @@ class FeishuChannel:
                 .request_body(body) \
                 .build()
 
-            log.debug("飞书发卡片 chat=%s done=%s text_len=%d", chat_id, done, len(text))
+            log.debug("飞书发卡片 chat=%s", chat_id)
             resp = await self._rest_client.im.v1.message.acreate(request)
             msg_id = resp.data.message_id if resp.data else None
             if not msg_id:
@@ -397,11 +636,11 @@ class FeishuChannel:
             log.exception("飞书创建卡片消息失败")
             return None
 
-    async def _update_card(self, message_id: str, text: str, done: bool) -> bool:
+    async def _update_card(self, message_id: str, card: dict) -> bool:
         """编辑一条已发送的交互卡片消息。返回是否成功。"""
         try:
             body = _PatchMessageRequestBody.builder() \
-                .content(json.dumps(self._build_card(text, done), ensure_ascii=False)) \
+                .content(json.dumps(card, ensure_ascii=False)) \
                 .build()
 
             request = _PatchMessageRequest.builder() \

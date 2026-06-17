@@ -128,9 +128,9 @@ class VectorStore:
                   AND k = ?
             ),
             sparse AS (
-                SELECT rowid AS id, bm25({FTS_FACT}) AS rank
+                SELECT rowid AS id, bm25(fts_fact) AS rank
                 FROM {FTS_FACT}
-                WHERE {FTS_FACT} MATCH ?
+                WHERE fts_fact MATCH ?
                 ORDER BY rank DESC
                 LIMIT ?
             )

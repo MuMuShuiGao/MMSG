@@ -24,6 +24,7 @@ def setup_logging(level: int | str = logging.INFO) -> None:
             logging.FileHandler("mmsg.log", encoding="utf-8", delay=True),
         ],
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 __all__ = [
