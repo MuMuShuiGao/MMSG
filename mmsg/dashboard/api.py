@@ -24,7 +24,7 @@ def _build_app(
     memory: DefaultMarkdownLayer,
     proactive_engine: Any = None,
     memory_curator: Any = None,
-    self_curator: Any = None,
+    evolver: Any = None,
     consolidator: Any = None,
     merger: Any = None,
 ) -> FastAPI:
@@ -237,23 +237,32 @@ def _build_app(
         async def get_memory_state() -> dict[str, Any]:
             return memory_curator.get_state()
 
-    # ── Self Curator ─────────────────────────────
+    # ── Evolver ──────────────────────────────────
 
-    if self_curator is not None:
+    if evolver is not None:
 
-        @app.post("/api/memory/self-curate")
-        async def trigger_self_curate() -> dict[str, Any]:
-            log.info("[Dashboard] trigger_self_curate")
+        @app.post("/api/memory/evolve")
+        async def trigger_evolve() -> dict[str, Any]:
+            log.info("[Dashboard] trigger_evolve")
             try:
-                result = await self_curator.trigger_curate()
+                result = await evolver.trigger_evolve()
                 return result
             except Exception as e:
-                log.exception("[Dashboard] trigger_self_curate failed")
+                log.exception("[Dashboard] trigger_evolve failed")
                 raise HTTPException(status_code=500, detail=str(e))
 
-        @app.get("/api/memory/self-state")
-        async def get_self_state() -> dict[str, Any]:
-            return self_curator.get_state()
+        @app.get("/api/memory/evolver-state")
+        async def get_evolver_state() -> dict[str, Any]:
+            return evolver.get_state()
+
+    @app.get("/api/memory/pending")
+    async def get_pending() -> dict[str, str]:
+        return {"content": memory.read_pending() or ""}
+
+    @app.delete("/api/memory/pending")
+    async def clear_pending() -> dict[str, Any]:
+        memory.clear_pending()
+        return {"ok": True}
 
     # ── Consolidator / Merger 状态 ─────────────────
 
@@ -282,7 +291,7 @@ async def start_dashboard(
     port: int = 9876,
     proactive_engine: Any = None,
     memory_curator: Any = None,
-    self_curator: Any = None,
+    evolver: Any = None,
     consolidator: Any = None,
     merger: Any = None,
 ) -> None:
@@ -305,7 +314,7 @@ async def start_dashboard(
         log.warning("Dashboard requires SqliteStore. Sessions tab disabled.")
         return
 
-    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator, self_curator=self_curator, consolidator=consolidator, merger=merger)
+    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator, evolver=evolver, consolidator=consolidator, merger=merger)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     log.info("Dashboard → http://127.0.0.1:%d", port)

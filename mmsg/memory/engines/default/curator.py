@@ -1,6 +1,6 @@
 """长期记忆策展 worker。
 
-独立后台循环：增量扫 user/assistant 对话 → LLM 提炼画像 → 写入 memory.md。
+独立后台循环：增量扫 user/assistant 对话 → LLM 对比已有画像产出增量 delta → 追加到 PENDING.md。
 用水位机制避免重复扫，重试上限防止卡死。
 """
 from __future__ import annotations
@@ -20,7 +20,6 @@ log = logging.getLogger("mmsg.memory.curator")
 DEFAULT_MIN_NEW_MSG = 5
 DEFAULT_MIN_HOURS = 6
 MAX_RETRY = 3
-MEMORY_MAX_CHARS = 4000
 
 
 class MemoryCurator:
@@ -132,7 +131,7 @@ class MemoryCurator:
 
         old_memory = self._markdown.get_memory_context() or ""
 
-        system_prompt = MEMORY_CURATION_SYSTEM_PROMPT.replace("{max_chars}", str(MEMORY_MAX_CHARS))
+        system_prompt = MEMORY_CURATION_SYSTEM_PROMPT
 
         now = datetime.now(timezone.utc).isoformat()
         log.info("开始策展: watermark=%d batch_max=%d count=%d retry=%d",
@@ -159,9 +158,9 @@ class MemoryCurator:
             await self._handle_failure(batch_max_id, "JSON 解析失败")
             return
 
-        new_memory = data.get("memory", "")
-        if new_memory:
-            self._markdown.write_memory(new_memory)
+        delta = data.get("delta", "")
+        if delta:
+            self._markdown.write_pending(delta)
 
         self._last_curated_id = batch_max_id
         self._pending_batch_max_id = 0
@@ -169,11 +168,8 @@ class MemoryCurator:
         self._last_run_at = now
 
         log.info(
-            "策展完成: watermark=%d chars=%d added=%d removed=%d note=%s",
-            batch_max_id, len(new_memory),
-            len(data.get("added", [])),
-            len(data.get("removed", [])),
-            data.get("note", ""),
+            "策展完成: watermark=%d delta_chars=%d note=%s",
+            batch_max_id, len(delta), data.get("note", ""),
         )
 
     async def _handle_failure(self, batch_max_id: int, reason: str) -> None:

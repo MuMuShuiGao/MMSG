@@ -48,6 +48,21 @@ class MarkdownMemoryLayer(ABC):
         """摘要压缩调度。"""
         ...
 
+    @abstractmethod
+    def read_pending(self) -> str | None:
+        """读取 PENDING.md。"""
+        ...
+
+    @abstractmethod
+    def write_pending(self, content: str) -> None:
+        """追加写入 PENDING.md。"""
+        ...
+
+    @abstractmethod
+    def clear_pending(self) -> None:
+        """清空 PENDING.md。"""
+        ...
+
 
 # ── 向量引擎层 ───────────────────────────────────────────────
 

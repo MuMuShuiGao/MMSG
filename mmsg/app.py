@@ -196,14 +196,14 @@ async def _serve(host: str, port: int) -> None:
     )
     asyncio.create_task(memory_curator.serve())
 
-    # 自我认知策展 worker
-    from .memory.engines.default.self_curator import SelfCurator
-    self_curator = SelfCurator(
+    # Evolver worker：消化 PENDING → 合并到 memory.md + 更新 self.md
+    from .memory.engines.default.evolver import Evolver
+    evolver = Evolver(
         store=store,
         llm=llm,
         markdown=memory.markdown,
     )
-    asyncio.create_task(self_curator.serve())
+    asyncio.create_task(evolver.serve())
 
     # 事实提取 consolidator + 合并 worker（需要向量引擎可用）
     consolidator = None
@@ -247,7 +247,7 @@ async def _serve(host: str, port: int) -> None:
     dashboard_task = asyncio.create_task(
         start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876,
                         proactive_engine=proactive, memory_curator=memory_curator,
-                        self_curator=self_curator,
+                        evolver=evolver,
                         consolidator=consolidator, merger=merger)
     )
 

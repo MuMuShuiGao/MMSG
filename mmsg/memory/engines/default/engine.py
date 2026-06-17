@@ -23,6 +23,7 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
         self.context = MarkdownFile(memory_dir / "current_context.md", default="# 近期摘要\n")
         self.knowledge = MarkdownFile(memory_dir / "memory.md")
         self.self_file = MarkdownFile(memory_dir / "self.md", default=SELF_MD_TEMPLATE)
+        self.pending = MarkdownFile(memory_dir / "PENDING.md")
 
     def get_memory_context(self) -> str | None:
         return self.knowledge.read()
@@ -43,6 +44,17 @@ class DefaultMarkdownLayer(MarkdownMemoryLayer):
         """短期摘要：委托 RecentRecapper 压缩对话 → current_context.md。"""
         from .recapper import RecentRecapper
         await RecentRecapper(self.context).recape(messages)
+
+    def read_pending(self) -> str | None:
+        return self.pending.read()
+
+    def write_pending(self, content: str) -> None:
+        existing = self.pending.read() or ""
+        new = existing + "\n" + content if existing else content
+        self.pending.write(new)
+
+    def clear_pending(self) -> None:
+        self.pending.write("")
 
 
 class DefaultMemoryEngine(MemoryEngine):

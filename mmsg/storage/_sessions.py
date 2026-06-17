@@ -124,7 +124,7 @@ class SessionMixin:
         return [dict(r) for r in rows]
 
     def get_messages_since(self, since_id: int, roles: list[str] | None = None) -> list[dict[str, Any]]:
-        """SelfCurator 用：取 id > since_id 的双方消息，roles 为空则取全部。"""
+        """取 id > since_id 的双方消息，roles 为空则取全部。"""
         if roles:
             placeholders = ",".join("?" * len(roles))
             rows = self._conn.execute(
