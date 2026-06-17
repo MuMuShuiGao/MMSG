@@ -48,6 +48,7 @@ def _ensure_deps() -> None:
         ("uvicorn", "uvicorn"),
         ("websockets", "websockets"),
         ("lark_oapi", "lark-oapi"),
+        ("mcp", "mcp"),
     ]:
         if find_spec(mod) is None:
             missing.append(pkg)
@@ -127,6 +128,11 @@ async def _serve(host: str, port: int) -> None:
     _ensure_deps()
     _register_plugins()
 
+    # MCP server 接入（可选，配置缺失则跳过）
+    from .tools.mcp import MCPManager
+    mcp_manager = MCPManager(tool_registry, workspace=workspace_path())
+    await mcp_manager.start()
+
     # 静默 Lark SDK WebSocket 正常关闭时的 asyncio task 异常警告
     from websockets.exceptions import ConnectionClosedOK
 
@@ -146,6 +152,8 @@ async def _serve(host: str, port: int) -> None:
     store = SqliteStore(workspace_path() / "history.db")
     llm = llm_registry.create("openai")
     tools = tool_registry.all()
+    # 注意：tools 是启动期快照；MCP server 重连后补注册的工具不在此快照中，
+    # PermissionGate 遇到未知工具默认放行，属于安全方向的降级。
     agent_bus.subscribe_intercept(AgentEvent.BeforeToolCall, PermissionGate(tools))
     memory = create_memory()
 
@@ -258,6 +266,7 @@ async def _serve(host: str, port: int) -> None:
         pass
     finally:
         log.info("正在关闭服务...")
+        await mcp_manager.aclose()
         await tool_registry.aclose()
         # 先停 channel（特别是飞书的 executor 线程）
         for ch in channels:

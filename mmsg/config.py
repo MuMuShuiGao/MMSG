@@ -71,6 +71,27 @@ poll_interval = 120
 min_days = 3
 poll_interval = 3600
 similarity_threshold = 0.97
+
+# ============================================================
+# MCP server 配置（可选，格式与 Claude Desktop mcpServers 兼容）
+# 每个 server 对应一个 [mcp.servers.<name>] section
+# transport: stdio（默认）| http
+# risk: safe | write | network（默认 network）
+# timeout: 单次调用超时秒数（默认 30）
+# enabled: true（默认）| false
+# ============================================================
+# 示例（取消注释即可启用）：
+#
+# [mcp.servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "~/.MMSG/workspace"]
+# risk = "write"
+#
+# [mcp.servers.github]
+# transport = "http"
+# url = "https://example.com/mcp"
+# headers = { Authorization = "Bearer your-token" }
+# risk = "network"
 """
 
 
@@ -139,3 +160,8 @@ def consolidator(key: str, default=None):
 
 def merger(key: str, default=None):
     return _load().get("merger", {}).get(key, default)
+
+
+def mcp_servers() -> dict:
+    """返回 config.toml [mcp.servers.*] 字典，key 为 server 名，value 为 server 配置 dict。"""
+    return _load().get("mcp", {}).get("servers", {})

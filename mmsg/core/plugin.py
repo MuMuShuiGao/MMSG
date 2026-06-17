@@ -55,6 +55,13 @@ class ToolRegistry(Registry):
             raise KeyError(f"{self.kind} '{name}' not found. have: {list(self._instances)}")
         return self._instances[name]
 
+    def register_instance(self, name: str, instance: Any) -> None:
+        """直接注册已构造好的实例（供 MCPManager 等动态注册使用）。"""
+        if name in self._instances:
+            raise ValueError(f"tool '{name}' already registered")
+        self._instances[name] = instance
+        self._items[name] = type(instance)
+
     def all(self) -> dict[str, Any]:
         return dict(self._instances)
 

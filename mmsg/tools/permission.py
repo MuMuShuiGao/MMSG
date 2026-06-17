@@ -30,7 +30,7 @@ class PermissionGate:
         tool = self._tools.get(name)
         if tool is None:
             return evt
-        risk: str = getattr(type(tool), "risk", "safe")
+        risk: str = getattr(tool, "risk", getattr(type(tool), "risk", "safe"))
         if risk not in self._ALLOW:
             return evt.model_copy(
                 update={
