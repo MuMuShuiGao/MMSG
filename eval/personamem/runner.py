@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from mmsg.llm import OpenAIProvider
-from mmsg.memory import MemoryRuntime
 
 from .answer import ask_question, build_agent
 from .grader import grade
@@ -21,6 +20,7 @@ async def run_one_sample(
     llm: OpenAIProvider,
     base_temp_dir: Path,
     consolidate_every: int = 50,
+    embedding_provider=None,
 ) -> dict:
     """对一条样本跑完 MCQ 并返回结果。
 
@@ -44,15 +44,16 @@ async def run_one_sample(
     # 1. 灌历史
     history_turns = sample.get("history_turns", [])
     log.info("[%s] 灌历史 %d 轮...", pid, len(history_turns))
-    memory: MemoryRuntime = await ingest_history(
+    memory, recaller = await ingest_history(
         history_turns,
         memory_dir,
         llm=llm,
-        consolidate_every=consolidate_every,
+        recapper_every=consolidate_every,
+        embedding_provider=embedding_provider,
     )
 
     # 2. 构建 agent
-    agent = build_agent(llm, memory, workspace)
+    agent = build_agent(llm, memory, workspace, recaller=recaller)
 
     # 3. 组装题目：问题 + 选项
     options = sample.get("all_options", [])

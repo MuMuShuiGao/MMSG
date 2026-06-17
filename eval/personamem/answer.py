@@ -20,6 +20,7 @@ def build_agent(
     llm: OpenAIProvider,
     memory: object,
     workspace_dir: Path,
+    recaller=None,
 ) -> AgentLoop:
     """构造独立 AgentLoop，隔离 storage、bus、tools。"""
     agent_bus = AgentBus()
@@ -35,6 +36,7 @@ def build_agent(
         message_bus=message_bus,
         system_builder=SystemPromptBuilder(workspace=workspace_dir),
         storage=store,
+        recaller=recaller,
     )
 
 

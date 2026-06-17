@@ -107,7 +107,7 @@ def _render_markdown(summary: dict, prev: dict | None) -> str:
     lines.append("|------|------|--------|------|------|")
 
     for qt, bucket in summary["by_question_type"].items():
-        prev_bucket = (prev.get("by_question_type", {}).get(qt) if prev else {})
+        prev_bucket = (prev.get("by_question_type", {}).get(qt) if prev else {}) or {}
         prev_acc_type = prev_bucket.get("accuracy")
         curr_acc_type = bucket["accuracy"]
         diff_type = f"{(curr_acc_type - prev_acc_type):+.2%}" if prev_acc_type is not None else "—"

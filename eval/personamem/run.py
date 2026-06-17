@@ -13,6 +13,7 @@ from pathlib import Path
 from mmsg.config import llm as _llm_cfg
 from mmsg.core import llm_registry
 from mmsg.llm import OpenAIProvider
+from mmsg.llm.embedding import create_embedding_provider
 
 from .config import TIERS
 from .dataset import load_personamem
@@ -66,6 +67,11 @@ async def main() -> None:
         log.info("--limit %d，实际跑 %d 道题", args.limit, len(samples))
 
     llm = OpenAIProvider(timeout=300.0)
+    embed = create_embedding_provider()
+    if embed:
+        log.info("embedding provider 已加载，Consolidator + Recaller 开启")
+    else:
+        log.info("embedding provider 未配置，跳过向量召回（仅 memory.md）")
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     output_dir = RESULTS_ROOT / f"{timestamp}_{args.tier}"
@@ -83,7 +89,7 @@ async def main() -> None:
     async def _run_one(idx: int, sample: dict) -> dict:
         nonlocal completed
         async with semaphore:
-            result = await run_one_sample(sample, llm, base_temp)
+            result = await run_one_sample(sample, llm, base_temp, embedding_provider=embed)
         async with lock:
             completed += 1
             correct_str = "✓" if result.get("correct") else "✗"
@@ -123,6 +129,7 @@ async def main() -> None:
         "context_size": args.context_size,
         "model": _llm_cfg("model"),
         "memory_backend": "default",
+        "recall_enabled": embed is not None,
         "sample_count": len(samples),
         "question_count": len(all_results),
         "answers_parsed": sum(1 for q in all_results if q.get("predicted") is not None),
