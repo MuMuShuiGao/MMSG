@@ -1,10 +1,13 @@
 """召回协调器：判别器 LLM → hybrid 检索 → RRF + MMR → top-k facts。
 
 每个 turn 由 Reasoner 调用一次 recall_for_turn()，多 step 共享结果。
+评测时调用 recall_with_trace() 获取全部中间阶段产物。
 """
 from __future__ import annotations
 
 import logging
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 import jieba
@@ -15,6 +18,15 @@ from .fact import Fact
 from .protocol import MemoryRuntime
 from ..llm.base import ChatMessage, LLMProvider
 from .engines.default.vector_store import VectorStore
+
+
+@dataclass
+class RecallTrace:
+    """recall_with_trace() 的完整中间产物，供离线评测使用。"""
+    discriminator: dict                             # {need_recall, query, raw}
+    retrieval_candidates: list[Fact] = field(default_factory=list)  # hybrid_search 全部候选
+    rrf_ranked: list[Fact] = field(default_factory=list)            # RRF 融合后 top-20
+    mmr_output: list[Fact] = field(default_factory=list)            # MMR 去重后 top-k
 
 log = logging.getLogger("mmsg.memory.recall")
 
@@ -63,15 +75,47 @@ class Recaller:
         self._store: VectorStore | None = memory.vector_store
 
     async def recall_for_turn(self, user_msg: str) -> list[Fact]:
+        trace = await self.recall_with_trace(user_msg)
+        if not trace.discriminator.get("need_recall"):
+            return []
+        return trace.mmr_output
+
+    async def recall_with_trace(self, user_msg: str) -> RecallTrace:
+        """始终跑完所有 stage，无视判别器决策，供评测使用。"""
+        disc = await self._classify(user_msg)
+
         if not self._store or not self._embed:
-            return []
+            return RecallTrace(discriminator=disc)
 
-        decision = await self._classify(user_msg)
-        if not decision.get("need_recall"):
-            return []
+        query = disc.get("query", user_msg)
 
-        query = decision.get("query", user_msg)
-        return await self._hybrid_recall(query)
+        try:
+            query_vecs = await self._embed.embed([query])
+            query_vec = query_vecs[0]
+        except Exception:
+            log.exception("Embedding 调用失败，trace 返回空")
+            return RecallTrace(discriminator=disc)
+
+        tokens = re.sub(r"[^\w\s]", " ", " ".join(jieba.cut(query)))
+        candidates = self._store.hybrid_search(
+            embedding=query_vec,
+            tokens=tokens,
+            dense_k=self._dense_k,
+            sparse_k=self._sparse_k,
+        )
+
+        if not candidates:
+            return RecallTrace(discriminator=disc)
+
+        rrf_ranked = _rrf_fusion(candidates, k=self._rrf_k)
+        mmr_output = _mmr(rrf_ranked, self._store, self._output_k, self._mmr_lambda)
+
+        return RecallTrace(
+            discriminator=disc,
+            retrieval_candidates=candidates,
+            rrf_ranked=rrf_ranked,
+            mmr_output=mmr_output,
+        )
 
     async def _classify(self, user_msg: str) -> dict:
         try:
@@ -88,31 +132,6 @@ class Recaller:
         except Exception:
             log.exception("判别器 LLM 调用失败，降级为不召回")
         return {"need_recall": False}
-
-    async def _hybrid_recall(self, query: str) -> list[Fact]:
-        try:
-            query_vecs = await self._embed.embed([query])
-            query_vec = query_vecs[0]
-        except Exception:
-            log.exception("Embedding 调用失败，降级为空结果")
-            return []
-
-        tokens = " ".join(jieba.cut(query))
-
-        candidates = self._store.hybrid_search(
-            embedding=query_vec,
-            tokens=tokens,
-            dense_k=self._dense_k,
-            sparse_k=self._sparse_k,
-        )
-
-        if not candidates:
-            return []
-
-        # RRF 融合
-        scored = _rrf_fusion(candidates, k=self._rrf_k)
-        # MMR 去重
-        return _mmr(scored, self._store, self._output_k, self._mmr_lambda)
 
 
 def _rrf_fusion(candidates: list[Fact], k: int = 60) -> list[Fact]:

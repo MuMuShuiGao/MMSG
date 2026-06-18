@@ -22,6 +22,9 @@ venv/
 # Eval outputs
 eval/results/
 
+# LongMemEval 数据文件（手动下载）
+eval/longmemeval/data/
+
 # Bytecode
 *.pyc
 

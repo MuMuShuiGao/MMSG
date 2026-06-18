@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import struct
 from datetime import datetime, timezone
 
@@ -118,6 +119,10 @@ class VectorStore:
     ) -> list[Fact]:
         """一条 SQL 同时拿 dense 和 sparse 结果，返回合并列表（未融合）。"""
         vec_blob = _serialize_embedding(embedding)
+        # 过滤 FTS5 不支持的特殊字符（单引号、问号等），防止 syntax error
+        safe_tokens = re.sub(r"[^\w\s\u4e00-\u9fff]", " ", tokens).strip()
+        if not safe_tokens:
+            safe_tokens = "x"  # FTS5 MATCH 不接受空字符串
 
         rows = self._conn.execute(
             f"""
@@ -142,7 +147,7 @@ class VectorStore:
             LEFT JOIN sparse s ON s.id = f.id
             WHERE d.id IS NOT NULL OR s.id IS NOT NULL
             """,
-            (vec_blob, dense_k, tokens, sparse_k),
+            (vec_blob, dense_k, safe_tokens, sparse_k),
         ).fetchall()
 
         facts: list[Fact] = []
