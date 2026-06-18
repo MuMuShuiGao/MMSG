@@ -121,7 +121,7 @@ def _ensure_config() -> None:
         sys.exit(1)
 
 
-async def _serve(host: str, port: int) -> None:
+async def _serve(host: str, port: int, dashboard_port: int = 9876) -> None:
     _ensure_config()
     workspace_path().mkdir(parents=True, exist_ok=True)
     setup_logging(level=log_level())
@@ -189,7 +189,6 @@ async def _serve(host: str, port: int) -> None:
             store=store,
             llm=llm,
             memory=memory,
-            tools=tools,
             message_bus=message_bus,
             agent_bus=agent_bus,
         )
@@ -253,7 +252,7 @@ async def _serve(host: str, port: int) -> None:
 
     from .dashboard import start_dashboard
     dashboard_task = asyncio.create_task(
-        start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=9876,
+        start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=dashboard_port,
                         proactive_engine=proactive, memory_curator=memory_curator,
                         evolver=evolver,
                         consolidator=consolidator, merger=merger)

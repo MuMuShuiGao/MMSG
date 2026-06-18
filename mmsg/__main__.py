@@ -30,6 +30,7 @@ def main() -> None:
     serve_parser = subparsers.add_parser("serve", help="启动服务端")
     serve_parser.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
     serve_parser.add_argument("--port", type=int, default=9090, help="监听端口（默认 9090）")
+    serve_parser.add_argument("--dashboard-port", type=int, default=9876, help="Dashboard 端口（默认 9876）")
 
     subparsers.add_parser("cli", help="启动 TUI 客户端")
 
@@ -44,7 +45,7 @@ def main() -> None:
     elif args.command == "serve":
         from .app import _serve
         try:
-            asyncio.run(_serve(args.host, args.port))
+            asyncio.run(_serve(args.host, args.port, args.dashboard_port))
         except KeyboardInterrupt:
             pass
     elif args.command == "cli":

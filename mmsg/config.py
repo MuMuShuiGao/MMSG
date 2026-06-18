@@ -46,12 +46,10 @@ app_secret = ""
 [proactive]
 # 主动聊天配置（可选）
 channel = ""
-# 主动强度: strong(2h) / medium(4h) / weak(24h)
-intensity = "medium"
 # 静默免责时段（此时间段内不主动说话）
 quiet_start = "00:00"
 quiet_end = "07:00"
-# 整理间隔（秒），默认 900（15 分钟），调试时可改为 30
+# 主循环心跳间隔（秒），默认 900（15 分钟）
 consolidate_interval = 900
 
 [embedding]
