@@ -145,24 +145,3 @@ class SessionMixin:
             (since_id,),
         ).fetchone()
         return row[0] if row else 0
-
-    def get_recent_user_message_ids(self, limit: int = 50) -> list[int]:
-        """反刍检测用：取最近 N 条 user message id（不含 content）。"""
-        rows = self._conn.execute(
-            "SELECT id FROM message WHERE role = 'user' ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [r[0] for r in rows]
-
-    def update_message(self, msg_id: int, content: str) -> None:
-        self._conn.execute(
-            "UPDATE message SET content = ? WHERE id = ?",
-            (content, msg_id),
-        )
-        self._conn.commit()
-
-    def get_message(self, msg_id: int) -> dict | None:
-        row = self._conn.execute(
-            "SELECT * FROM message WHERE id = ?", (msg_id,)
-        ).fetchone()
-        return dict(row) if row else None
