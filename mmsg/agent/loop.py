@@ -37,6 +37,7 @@ class AgentLoop:
         max_steps: int = 8,
         name: str = "agent",
         storage: SqliteStore | None = None,
+        tool_registry = None,
         recaller = None,
     ) -> None:
         self.bus = agent_bus
@@ -54,6 +55,7 @@ class AgentLoop:
             system_builder=system_builder,
             max_steps=max_steps,
             name=name,
+            tool_registry=tool_registry,
         )
         self.reasoner._recaller = recaller
 

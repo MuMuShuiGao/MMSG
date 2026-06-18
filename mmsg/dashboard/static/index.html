@@ -145,6 +145,33 @@ body {
 .usage-table tbody tr:hover { background: rgba(124,58,237,.05); }
 .usage-table tr:last-child td { border-bottom: none; }
 
+.tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; padding: 22px; animation: fadeUp .45s ease both; }
+.tool-card { background: rgba(255,255,255,.7); backdrop-filter: blur(8px); border: 1px solid rgba(148,163,184,.18); border-radius: 16px; padding: 16px 18px; box-shadow: 0 6px 20px rgba(79,70,229,.07); transition: box-shadow .25s, opacity .25s; }
+.tool-card.disabled { opacity: .48; }
+.tool-card:hover { box-shadow: 0 12px 32px rgba(79,70,229,.12); }
+.tool-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.tool-card-name { font-size: 15px; font-weight: 700; color: #1e1b4b; font-family: "Fira Code", "Cascadia Code", Consolas, Monaco, "SF Mono", monospace; }
+.tool-card-desc { font-size: 13px; color: #475569; margin-bottom: 10px; line-height: 1.6; }
+.tool-card-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.tool-badge { font-size: 10px; padding: 2px 9px; border-radius: 12px; font-weight: 700; }
+.tool-badge-source { background: linear-gradient(135deg, #ede9fe, #ddd6fe); color: #6d28d9; }
+.tool-badge-risk-safe { background: linear-gradient(135deg, #d1fae5, #a7f3d0); color: #065f46; }
+.tool-badge-risk-write { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #92400e; }
+.tool-badge-risk-network { background: linear-gradient(135deg, #fce7f3, #fbcfe8); color: #9d174d; }
+.tool-card-toggle { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+.tool-card-toggle input { opacity: 0; width: 0; height: 0; }
+.tool-card-toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: rgba(148,163,184,.3); border-radius: 26px; transition: .22s; }
+.tool-card-toggle .slider::before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .22s; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.tool-card-toggle input:checked + .slider { background: linear-gradient(135deg, #7c3aed, #a78bfa); }
+.tool-card-toggle input:checked + .slider::before { transform: translateX(22px); }
+.tool-card-toggle input:focus + .slider { box-shadow: 0 0 0 3px rgba(124,58,237,.25); }
+.tool-schema-toggle { font-size: 12px; color: #7c3aed; cursor: pointer; user-select: none; font-weight: 600; margin-top: 6px; display: inline-block; }
+.tool-schema-toggle:hover { color: #5b21b6; }
+.tool-schema-box { margin-top: 6px; background: rgba(124,58,237,.04); border-radius: 8px; padding: 10px 12px; font-size: 11px; font-family: "Fira Code", "Cascadia Code", Consolas, Monaco, "SF Mono", monospace; overflow-x: auto; max-height: 260px; line-height: 1.7; color: #475569; white-space: pre; }
+.tools-actions { display: flex; gap: 10px; padding: 0 22px 6px; }
+.tools-actions button { font-size: 12px; padding: 6px 16px; border-radius: 10px; border: 1px solid rgba(148,163,184,.22); background: rgba(255,255,255,.7); color: #475569; cursor: pointer; font-weight: 600; transition: .2s; }
+.tools-actions button:hover { background: rgba(124,58,237,.08); border-color: rgba(124,58,237,.32); color: #7c3aed; }
+
 .memory-panel { flex: 1; display: flex; gap: 18px; padding: 22px; overflow: hidden; animation: fadeUp .45s ease both; }
 .memory-col { flex: 1; display: flex; flex-direction: column; background: rgba(255,255,255,.7); backdrop-filter: blur(8px); border: 1px solid rgba(148,163,184,.18); border-radius: 16px; padding: 16px; box-shadow: 0 6px 20px rgba(79,70,229,.07); transition: box-shadow .25s; }
 .memory-col:hover { box-shadow: 0 12px 30px rgba(124,58,237,.12); }
@@ -1108,6 +1135,82 @@ function ProactiveView() {
   );
 }
 
+// ── Tools Tab ──
+function ToolsView() {
+  const [tools, setTools] = useState(null);
+  const [expanded, setExpanded] = useState({});
+
+  const fetchTools = useCallback(() => api("/api/tools").then(setTools), []);
+  useEffect(() => { fetchTools(); }, [fetchTools]);
+
+  const toggle = async (name, enabled) => {
+    await api("/api/tools/" + encodeURIComponent(name), { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ enabled }) });
+  };
+
+  const allOn = async () => {
+    if (!tools) return;
+    await Promise.all(tools.filter(t => !t.enabled).map(t => toggle(t.name, true)));
+    fetchTools();
+  };
+  const allOff = async () => {
+    if (!tools) return;
+    await Promise.all(tools.filter(t => t.enabled).map(t => toggle(t.name, false)));
+    fetchTools();
+  };
+
+  const toggleOne = async (name, enabled) => {
+    await toggle(name, enabled);
+    fetchTools();
+  };
+
+  const riskColor = r => ({ safe: "#065f46", write: "#92400e", network: "#9d174d" }[r] || "#475569");
+
+  if (!tools) return <div className="loading">加载中...</div>;
+
+  return (
+    <>
+      <div className="tools-actions">
+        <button onClick={allOn}>✅ 全部启用</button>
+        <button onClick={allOff}>⬜ 全部禁用</button>
+        <span style={{ fontSize: 12, color: "#94a3b8", marginLeft: 8, alignSelf: "center" }}>
+          {tools.filter(t => t.enabled).length}/{tools.length} 已启用
+        </span>
+      </div>
+      <div className="tools-grid">
+        {tools.map(tool => (
+          <div key={tool.name} className={"tool-card" + (tool.enabled ? "" : " disabled")}>
+            <div className="tool-card-top">
+              <span className="tool-card-name">{tool.name}</span>
+              <label className="tool-card-toggle">
+                <input type="checkbox" checked={tool.enabled} onChange={e => toggleOne(tool.name, e.target.checked)} />
+                <span className="slider"></span>
+              </label>
+            </div>
+            <div className="tool-card-desc">{tool.description || "(无描述)"}</div>
+            <div className="tool-card-meta">
+              {tool.source && <span className="tool-badge tool-badge-source">{tool.source}</span>}
+              <span className={"tool-badge tool-badge-risk-" + (tool.risk || "safe")}
+                style={{ color: riskColor(tool.risk) }}>
+                {tool.risk || "safe"}
+              </span>
+            </div>
+            {tool.parameters && tool.parameters.properties && Object.keys(tool.parameters.properties).length > 0 && (
+              <>
+                <span className="tool-schema-toggle" onClick={() => setExpanded({ ...expanded, [tool.name]: !expanded[tool.name] })}>
+                  {expanded[tool.name] ? "▾ 收起参数" : "▸ 查看参数"} ({Object.keys(tool.parameters.properties).length} 个)
+                </span>
+                {expanded[tool.name] && (
+                  <div className="tool-schema-box">{JSON.stringify(tool.parameters, null, 2)}</div>
+                )}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ── App ──
 function App() {
   const [tab, setTab] = useState("sessions");
@@ -1123,9 +1226,10 @@ function App() {
           <button className={`tab${tab==="memory"?" active":""}`} onClick={()=>setTab("memory")}>🧠 Memory</button>
           <button className={`tab${tab==="proactive"?" active":""}`} onClick={()=>setTab("proactive")}>🎯 画像</button>
           <button className={`tab${tab==="writepaths"?" active":""}`} onClick={()=>setTab("writepaths")}>📐 写入路径</button>
+          <button className={`tab${tab==="tools"?" active":""}`} onClick={()=>setTab("tools")}>🛠 Tools</button>
         </div>
       </div>
-      {tab === "sessions" ? <SessionsView /> : tab === "messages" ? <MessagesView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : tab === "proactive" ? <ProactiveView /> : <WritePathsView />}
+      {tab === "sessions" ? <SessionsView /> : tab === "messages" ? <MessagesView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : tab === "proactive" ? <ProactiveView /> : tab === "tools" ? <ToolsView /> : <WritePathsView />}
     </>
   );
 }

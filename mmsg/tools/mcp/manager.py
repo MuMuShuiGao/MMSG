@@ -110,7 +110,7 @@ class MCPManager:
                     registered += 1
                     continue
             try:
-                self._registry.register_instance(tool.name, tool)
+                self._registry.register_instance(tool.name, tool, source=f"mcp:{name}")
                 registered += 1
             except ValueError:
                 log.debug("MCP tool '%s' 已注册，跳过", tool.name)

@@ -27,6 +27,7 @@ def _build_app(
     evolver: Any = None,
     consolidator: Any = None,
     merger: Any = None,
+    tool_registry: Any = None,
 ) -> FastAPI:
     app = FastAPI(title="MMSG Dashboard", version="0.1.0")
 
@@ -221,6 +222,21 @@ def _build_app(
                 result["merger"] = None
         return result
 
+    # ── Tools ──────────────────────────────────────
+
+    if tool_registry is not None:
+
+        @app.get("/api/tools")
+        async def list_tools() -> list[dict[str, Any]]:
+            return tool_registry.list_meta()
+
+        @app.patch("/api/tools/{name}")
+        async def set_tool_enabled(name: str, body: dict[str, Any]) -> dict[str, Any]:
+            enabled = bool(body.get("enabled", True))
+            if not tool_registry.set_enabled(name, enabled):
+                raise HTTPException(status_code=404, detail=f"tool '{name}' not found")
+            return {"ok": True, "name": name, "enabled": enabled}
+
     return app
 
 
@@ -234,6 +250,7 @@ async def start_dashboard(
     evolver: Any = None,
     consolidator: Any = None,
     merger: Any = None,
+    tool_registry: Any = None,
 ) -> None:
     try:
         import uvicorn
@@ -254,7 +271,7 @@ async def start_dashboard(
         log.warning("Dashboard requires SqliteStore. Sessions tab disabled.")
         return
 
-    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator, evolver=evolver, consolidator=consolidator, merger=merger)
+    app = _build_app(store, markdown, proactive_engine=proactive_engine, memory_curator=memory_curator, evolver=evolver, consolidator=consolidator, merger=merger, tool_registry=tool_registry)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     log.info("Dashboard → http://127.0.0.1:%d", port)

@@ -31,10 +31,10 @@ _OBSERVABLE_TYPES = {
 
 def _register_plugins() -> None:
     """全局一次性注册插件。只在启动时调用一次。"""
-    tool_registry.register("read_file")(ReadFileTool)
-    tool_registry.register("list_dir")(ListDirTool)
-    tool_registry.register("write_file", workspace=workspace_path())(WriteFileTool)
-    tool_registry.register("http_get")(HttpGetTool)
+    tool_registry.register("read_file", _source="builtin")(ReadFileTool)
+    tool_registry.register("list_dir", _source="builtin")(ListDirTool)
+    tool_registry.register("write_file", workspace=workspace_path(), _source="builtin")(WriteFileTool)
+    tool_registry.register("http_get", _source="builtin")(HttpGetTool)
     llm_registry.register("openai")(OpenAIProvider)
 
 
@@ -67,6 +67,7 @@ def _build_agent(
     llm: OpenAIProvider,
     tools: dict,
     memory: object,
+    tool_registry_ref = None,
     recaller = None,
 ) -> AgentLoop:
     return AgentLoop(
@@ -77,6 +78,7 @@ def _build_agent(
         message_bus=message_bus,
         storage=store,
         system_builder=SystemPromptBuilder(workspace=workspace_path()),
+        tool_registry=tool_registry_ref,
         recaller=recaller,
     )
 
@@ -133,6 +135,9 @@ async def _serve(host: str, port: int, dashboard_port: int = 9876) -> None:
     mcp_manager = MCPManager(tool_registry, workspace=workspace_path())
     await mcp_manager.start()
 
+    # 持久化工具启用状态
+    tool_registry.init_state(workspace_path() / "tool_state.json")
+
     # 静默 Lark SDK WebSocket 正常关闭时的 asyncio task 异常警告
     from websockets.exceptions import ConnectionClosedOK
 
@@ -152,8 +157,8 @@ async def _serve(host: str, port: int, dashboard_port: int = 9876) -> None:
     store = SqliteStore(workspace_path() / "history.db")
     llm = llm_registry.create("openai")
     tools = tool_registry.all()
-    # 注意：tools 是启动期快照；MCP server 重连后补注册的工具不在此快照中，
-    # PermissionGate 遇到未知工具默认放行，属于安全方向的降级。
+    # tools 是 PermissionGate 的快照；Reasoner 层通过 tool_registry 实时过滤启用/禁用，
+    # PermissionGate 只做风险门控，遇到快照里没有的 MCP 工具默认放行（降级安全）。
     agent_bus.subscribe_intercept(AgentEvent.BeforeToolCall, PermissionGate(tools))
     memory = create_memory()
 
@@ -171,7 +176,7 @@ async def _serve(host: str, port: int, dashboard_port: int = 9876) -> None:
         except Exception:
             log.exception("Recaller 创建失败，召回不可用")
 
-    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory, recaller=recaller)
+    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory, tool_registry_ref=tool_registry, recaller=recaller)
 
     async def _bridge_observable(evt) -> None:
         if evt.type in _OBSERVABLE_TYPES:
@@ -255,7 +260,8 @@ async def _serve(host: str, port: int, dashboard_port: int = 9876) -> None:
         start_dashboard(agent.storage, agent.memory, host="0.0.0.0", port=dashboard_port,
                         proactive_engine=proactive, memory_curator=memory_curator,
                         evolver=evolver,
-                        consolidator=consolidator, merger=merger)
+                        consolidator=consolidator, merger=merger,
+                        tool_registry=tool_registry)
     )
 
     log.info("服务已启动完成")
@@ -303,7 +309,7 @@ async def _batch(user_input: str) -> None:
     tools = tool_registry.all()
     agent_bus.subscribe_intercept(AgentEvent.BeforeToolCall, PermissionGate(tools))
     memory = create_memory()
-    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory)
+    agent = _build_agent(agent_bus, message_bus, store, llm, tools, memory, tool_registry_ref=tool_registry)
     final = ""
     async for chunk in agent.run(user_input):
         if chunk.done:

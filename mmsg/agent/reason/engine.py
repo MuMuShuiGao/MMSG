@@ -64,11 +64,13 @@ class Reasoner:
         max_window: int = 40,
         llm_input_turns: int = 10,
         summarize_every: int = 5,
+        tool_registry = None,
     ) -> None:
         self.llm = llm
         self.bus = bus
         self.memory = memory
         self.tools = tools
+        self._tool_registry = tool_registry
         self.max_steps = max_steps
         self.name = name
         self._history: list[ChatMessage] = []
@@ -88,7 +90,8 @@ class Reasoner:
         进入循环前调一次 Recaller（判别 + hybrid 召回），多 step 共享同一份 facts。
         """
         records: list[ChatMessage] = []
-        tool_schemas = [t.schema() for t in self.tools.values()] or None
+        effective = self._effective_tools()
+        tool_schemas = [t.schema() for t in effective.values()] or None
         final_text = ""
         total_usage: dict[str, Any] = {}
         step = 0
@@ -186,7 +189,7 @@ class Reasoner:
                     tool_result: Any = f"拒绝: {deny_reason}"
                 else:
                     await self.bus.observe(AgentEvent.BeforeToolCall, self.name, tc_evt.payload)
-                    tool = self.tools.get(tc.name)
+                    tool = effective.get(tc.name)
                     if tool is None:
                         tool_result = f"错误: 工具 '{tc.name}' 未注册"
                     else:
@@ -236,6 +239,15 @@ class Reasoner:
         )
 
     # ── 内部 ──────────────────────────────────────
+
+    def _effective_tools(self) -> dict[str, Any]:
+        """返回当前启用的工具。若有 tool_registry 则实时过滤，否则用快照。"""
+        if self._tool_registry is not None:
+            return {
+                n: t for n, t in self._tool_registry.all().items()
+                if self._tool_registry.is_enabled(n)
+            }
+        return self.tools
 
     async def _stream_reason_step(
         self,
