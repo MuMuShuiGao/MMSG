@@ -124,99 +124,39 @@ def _build_app(
         memory.write_self(body.get("content", ""))
         return {"ok": True}
 
-    # ── Curiosity Notes ──────────────────────────────
-
-    @app.get("/api/curiosity/notes")
-    async def list_curiosity_notes() -> list[dict[str, Any]]:
-        rows = store._conn.execute(
-            "SELECT * FROM curiosity_note ORDER BY "
-            "CASE status WHEN 'pending' THEN 1 WHEN 'pushed' THEN 2 ELSE 3 END, "
-            "created_at DESC"
-        ).fetchall()
-        results: list[dict[str, Any]] = []
-        for r in rows:
-            d = dict(r)
-            # 转换 needs_research int → bool 给前端
-            d["needs_research"] = bool(d.get("needs_research", 0))
-            results.append(d)
-        return results
-
-    @app.patch("/api/curiosity/notes/{note_id}")
-    async def update_curiosity_note(note_id: int, body: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"status", "quality", "needs_research"}
-        updates = {k: v for k, v in body.items() if k in allowed}
-        if not updates:
-            raise HTTPException(status_code=400, detail="no valid fields")
-        if "needs_research" in updates and isinstance(updates["needs_research"], bool):
-            updates["needs_research"] = int(updates["needs_research"])
-        sets = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values())
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        store._conn.execute(
-            f"UPDATE curiosity_note SET {sets}, updated_at = ? WHERE id = ?",
-            [*values, now, note_id],
-        )
-        store._conn.commit()
-        return {"ok": True}
-
     # ── Proactive 手动触发（调试用）─────────────────
 
     if proactive_engine is not None:
 
-        @app.post("/api/curiosity/trigger-curiosity/{session_id}")
-        async def trigger_curiosity(session_id: str) -> dict[str, Any]:
-            """手动触发：从指定 session 生成 curiosity notes — 通过 Dashboard。"""
-            log.info("[Dashboard] trigger_curiosity session=%s", session_id)
+        @app.get("/api/portrait/status")
+        async def portrait_status() -> dict[str, Any]:
+            """当前画像触发状态 + 下次推送预测。"""
             try:
-                count = await proactive_engine.trigger_curiosity(session_id)
-                log.info("[Dashboard] trigger_curiosity done session=%s generated=%d", session_id, count)
-                return {"ok": True, "generated": count}
+                return proactive_engine.portrait_status()
             except Exception as e:
-                log.exception("[Dashboard] trigger_curiosity failed session=%s", session_id)
+                log.exception("[Dashboard] portrait_status failed")
                 raise HTTPException(status_code=500, detail=str(e))
 
-        @app.post("/api/curiosity/review-notes")
-        async def trigger_review_curiosity() -> dict[str, Any]:
-            """手动触发：立即整理 pending curiosity notes — 通过 Dashboard。"""
-            log.info("[Dashboard] trigger_review_curiosity")
+        @app.post("/api/portrait/simulate")
+        async def simulate_portrait() -> dict[str, Any]:
+            """演练画像链路，不真发。"""
+            log.info("[Dashboard] simulate_portrait")
             try:
-                result = await proactive_engine.trigger_review_curiosity()
-                log.info("[Dashboard] trigger_review_curiosity done candidates=%d", result.get("count", 0))
+                result = await proactive_engine.simulate_portrait()
                 return {"ok": True, **result}
             except Exception as e:
-                log.exception("[Dashboard] trigger_review_curiosity failed")
+                log.exception("[Dashboard] simulate_portrait failed")
                 raise HTTPException(status_code=500, detail=str(e))
 
-        @app.post("/api/curiosity/simulate-push")
-        async def simulate_push() -> dict[str, Any]:
-            """模拟完整推送流程：整理→决策→生成消息，但不实际推送 — 通过 Dashboard。"""
-            log.info("[Dashboard] simulate_push")
+        @app.post("/api/portrait/execute")
+        async def execute_portrait() -> dict[str, Any]:
+            """强制触发画像链路，真发。"""
+            log.info("[Dashboard] execute_portrait")
             try:
-                result = await proactive_engine.simulate_push()
-                log.info(
-                    "[Dashboard] simulate_push done verdict=%s hours_since=%.1fh pushed_today=%d",
-                    result.get("verdict"), result.get("hours_since_active", 0),
-                    result.get("pushed_today", 0),
-                )
+                result = await proactive_engine.execute_portrait()
                 return {"ok": True, **result}
             except Exception as e:
-                log.exception("[Dashboard] simulate_push failed")
-                raise HTTPException(status_code=500, detail=str(e))
-
-        @app.post("/api/curiosity/execute-push")
-        async def execute_push() -> dict[str, Any]:
-            """执行真实推送：整理→决策→推送 — 通过 Dashboard。"""
-            log.info("[Dashboard] execute_push")
-            try:
-                result = await proactive_engine.execute_push()
-                log.info(
-                    "[Dashboard] execute_push done verdict=%s quiet=%s",
-                    result.get("verdict"), result.get("quiet_hours", False),
-                )
-                return {"ok": True, **result}
-            except Exception as e:
-                log.exception("[Dashboard] execute_push failed")
+                log.exception("[Dashboard] execute_portrait failed")
                 raise HTTPException(status_code=500, detail=str(e))
 
     # ── Memory Curator ──────────────────────────

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
@@ -227,7 +227,6 @@ function SessionsView() {
   const [search, setSearch] = useState("");
   const [titleEdit, setTitleEdit] = useState(null);
   const [editTitleVal, setEditTitleVal] = useState("");
-  const [genLoading, setGenLoading] = useState(false);
 
   useEffect(() => { api("/api/sessions").then(setSessions).catch(() => {}); }, []);
 
@@ -298,23 +297,6 @@ function SessionsView() {
                   <span style={{fontSize:11,color:"#555"}}>({messages.length} 条消息)</span>
                   <span style={{fontSize:11,color:"#6b7280"}}>创建：{fmtTs(sessions.find(s=>s.id===selectedId)?.created_at)}</span>
                   <span style={{fontSize:11,color:"#6b7280"}}>最新：{fmtTs(sessions.find(s=>s.id===selectedId)?.updated_at)}</span>
-                  <button
-                    disabled={genLoading}
-                    onClick={async () => {
-                      setGenLoading(true);
-                      try {
-                        const r = await api(`/api/curiosity/trigger-curiosity/${selectedId}`, { method: "POST" });
-                        toast(`已生成 ${r.generated} 条 curiosity note`);
-                      } catch(e) { toast("生成失败，查看后台日志"); }
-                      finally { setGenLoading(false); }
-                    }}
-                    style={{marginLeft:"auto",padding:"7px 16px",borderRadius:10,border:"none",
-                      background: genLoading ? "#94a3b8" : "linear-gradient(135deg, #f59e0b, #d97706)", color:"#fff",
-                      cursor: genLoading ? "wait" : "pointer", fontSize:12, fontWeight:600,
-                      boxShadow: genLoading ? "none" : "0 2px 8px rgba(245,158,11,.25)",
-                      transition: "all .2s cubic-bezier(.34,1.4,.64,1)"}}
-                    title="Dashboard: 基于当前会话生成 curiosity notes"
-                  >{genLoading ? "生成中..." : "生成 Notes"}</button>
                 </>
               )}
             </div>
@@ -798,263 +780,7 @@ function MessagesView() {
   );
 }
 
-// ── Curiosity Tab ──
-function CuriosityView() {
-  const [notes, setNotes] = useState([]);
-  const [simResult, setSimResult] = useState(null);
-  const [loading, setLoading] = useState(null); // null | "consolidate" | "simulate" | "execute"
-  const [actionLog, setActionLog] = useState([]); // [{ts, action, detail}]
-  const [statusFilter, setStatusFilter] = useState(""); // "" | "pending" | "pushed" | "dismissed"
-
-  const load = () => api("/api/curiosity/notes").then(setNotes).catch(() => {});
-
-  useEffect(() => { load(); }, []);
-
-  const nowTs = () => new Date().toLocaleTimeString("zh-CN", {hour:"2-digit",minute:"2-digit",second:"2-digit"});
-
-  const addLog = (action, detail) => {
-    setActionLog(prev => [{ts: nowTs(), action, detail}, ...prev].slice(0, 12));
-  };
-
-  const dismiss = async (id) => {
-    await api(`/api/curiosity/notes/${id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({status: "dismissed"}) });
-    load();
-    toast("已忽略");
-  };
-
-  const raiseQ = async (id, q) => {
-    const nq = Math.min(5, q + 1);
-    await api(`/api/curiosity/notes/${id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({quality: nq}) });
-    load();
-  };
-
-  const lowerQ = async (id, q) => {
-    const nq = Math.max(1, q - 1);
-    await api(`/api/curiosity/notes/${id}`, { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({quality: nq}) });
-    load();
-  };
-
-  const btnStyle = (key, bg) => ({
-    padding: "8px 18px", borderRadius: 10, border: "none", color: "#fff",
-    cursor: loading ? "wait" : "pointer", fontSize: 13, fontWeight: 600,
-    background: loading === key ? "#94a3b8" : bg,
-    transition: "all .2s cubic-bezier(.34,1.4,.64,1)",
-    boxShadow: loading === key ? "none" : "0 2px 8px rgba(0,0,0,.15)",
-    transform: loading === key ? "none" : "translateY(0)",
-  });
-
-  const pending = notes.filter(n => n.status === "pending");
-  const pushed = notes.filter(n => n.status === "pushed");
-  const dismissed = notes.filter(n => n.status === "dismissed");
-
-  const statusLabel = {pending:"待处理", pushed:"已推送", dismissed:"已忽略"};
-
-  const catLabel = c => ({follow_up: "🔁 追问", concern: "💛 关心", curiosity: "💡 好奇"}[c] || c);
-  const qStars = q => "★".repeat(q) + "☆".repeat(5 - q);
-
-  const verdictMeta = v => {
-    const map = {
-      would_push:          { color: "#16a34a", bg: "rgba(34,197,94,.12)",   border: "#22c55e" },
-      pushed:              { color: "#16a34a", bg: "rgba(34,197,94,.12)",   border: "#22c55e" },
-      skip:                { color: "#64748b", bg: "rgba(148,163,184,.12)", border: "#94a3b8" },
-      no_candidates:       { color: "#64748b", bg: "rgba(148,163,184,.12)", border: "#94a3b8" },
-      blocked_by_quiet_hours: { color: "#f59e0b", bg: "rgba(245,158,11,.12)", border: "#f59e0b" },
-      score_too_low:       { color: "#f59e0b", bg: "rgba(245,158,11,.12)", border: "#f59e0b" },
-      generation_failed:   { color: "#ef4444", bg: "rgba(239,68,68,.08)",   border: "#ef4444" },
-      push_failed:         { color: "#ef4444", bg: "rgba(239,68,68,.08)",   border: "#ef4444" },
-      empty_message:       { color: "#f59e0b", bg: "rgba(245,158,11,.12)", border: "#f59e0b" },
-    };
-    return map[v] || map.skip;
-  };
-
-  const verdictLabel = v => ({
-    would_push: "会推送", pushed: "已推送", skip: "跳过",
-    no_candidates: "无候选", blocked_by_quiet_hours: "被安静时段阻止",
-    score_too_low: "评分不足，未推送", generation_failed: "消息生成失败",
-    push_failed: "推送失败", empty_message: "生成消息为空",
-  }[v] || v);
-
-  const filteredNotes = notes.filter(n => !statusFilter || n.status === statusFilter);
-
-  return (
-    <div className="usage-panel">
-      <div className="usage-cards">
-        <div className="usage-card">
-          <div className="label">{statusLabel.pending}</div>
-          <div className="value">{pending.length}</div>
-        </div>
-        <div className="usage-card">
-          <div className="label">已推送（今日）</div>
-          <div className="value">{pushed.filter(n => n.triggered_at && new Date(n.triggered_at).toDateString() === new Date().toDateString()).length}</div>
-        </div>
-        <div className="usage-card">
-          <div className="label">{statusLabel.dismissed}</div>
-          <div className="value">{dismissed.length}</div>
-        </div>
-      </div>
-
-      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12,flexWrap:"wrap"}}>
-        <h3 style={{color:"#1e293b",fontSize:15,fontWeight:700,margin:0}}>{statusFilter ? statusLabel[statusFilter] + " Notes" : "全部 Notes"}</h3>
-        <button disabled={!!loading} onClick={async () => {
-          setLoading("consolidate");
-          addLog("立即整理", "正在调用 LLM 筛选 pending notes...");
-          try {
-            const r = await api("/api/curiosity/review-notes", { method: "POST" });
-            addLog("立即整理", `完成 - ${r.count} 条 pending 候选`);
-            toast(`整理完成，${r.count} 条 pending 候选`);
-            load();
-          } catch(e) { addLog("立即整理", "失败"); toast("整理失败"); }
-          finally { setLoading(null); }
-        }} style={btnStyle("consolidate", "#4f46e5")}
-          title="Dashboard: 立即运行 LLM 整理筛选 pending notes">{loading === "consolidate" ? "整理中..." : "立即整理"}</button>
-        <button disabled={!!loading} onClick={async () => {
-          setLoading("simulate");
-          addLog("模拟推送", "正在整理 -> 决策 -> 生成预览...");
-          try {
-            const r = await api("/api/curiosity/simulate-push", { method: "POST" });
-            setSimResult(r);
-            addLog("模拟推送", `结果: ${verdictLabel(r.verdict)}`);
-            toast(`模拟完成: ${verdictLabel(r.verdict)}`);
-            load();
-          } catch(e) { addLog("模拟推送", "失败"); toast("模拟失败"); }
-          finally { setLoading(null); }
-        }} style={btnStyle("simulate", "#db2777")}
-          title="Dashboard: 模拟完整推送流程，不实际发送消息">{loading === "simulate" ? "分析中..." : "模拟推送"}</button>
-        <button disabled={!!loading} onClick={async () => {
-          if (!confirm("确定要执行真实推送吗？消息将发送到 channel。")) return;
-          setLoading("execute");
-          addLog("执行推送", "正在整理 -> 决策 -> 推送...");
-          try {
-            const r = await api("/api/curiosity/execute-push", { method: "POST" });
-            setSimResult(r);
-            addLog("执行推送", `结果: ${verdictLabel(r.verdict)}`);
-            toast(`${verdictLabel(r.verdict)}`);
-            load();
-          } catch(e) { addLog("执行推送", "失败"); toast("推送失败"); }
-          finally { setLoading(null); }
-        }} style={btnStyle("execute", "#16a34a")}
-          title="Dashboard: 执行真实推送，消息将发送到 channel">{loading === "execute" ? "推送中..." : "执行推送"}</button>
-      </div>
-      {simResult && (() => {
-        const vm = verdictMeta(simResult.verdict);
-        return (
-        <div style={{marginBottom:16,padding:16,borderRadius:12,background:vm.bg,border:`1px solid ${vm.border}`,animation:"bubbleIn .35s cubic-bezier(.34,1.2,.64,1) both"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-            <strong style={{fontSize:15,color:vm.color}}>{verdictLabel(simResult.verdict)}</strong>
-            <span style={{fontSize:11,color:"#94a3b8",marginLeft:"auto"}}>{nowTs()}</span>
-            {simResult.quiet_hours && <span style={{fontSize:12,color:"#f59e0b"}}>[安静时段]</span>}
-          </div>
-          {simResult.best && (
-            <div style={{fontSize:13,color:"#334155",lineHeight:1.8}}>
-              <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:4}}>
-                <span><strong>静默时长：</strong>{simResult.hours_since_active}h</span>
-                <span><strong>今日已推：</strong>{simResult.pushed_today}次</span>
-                <span><strong>整理候选：</strong>{simResult.consolidated || 0}条</span>
-              </div>
-              {simResult.best.score_breakdown?.formula && (
-                <div><strong>评分公式：</strong><code style={{fontSize:12,background:"rgba(0,0,0,.06)",padding:"1px 6px",borderRadius:4}}>{simResult.best.score_breakdown.formula}</code> = <strong>{simResult.best.score_breakdown.final}</strong>（{'＞'}0 则推）</div>
-              )}
-              <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"rgba(255,255,255,.7)"}}>
-                <strong>候选内容：</strong>{simResult.best.content}
-              </div>
-              {simResult.best.message_preview && (
-                <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"rgba(79,70,229,.08)",color:"#4338ca"}}>
-                  <strong>推送预览：</strong>{simResult.best.message_preview}
-                </div>
-              )}
-              {simResult.best.message_sent && (
-                <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:"rgba(22,163,74,.1)",color:"#16a34a"}}>
-                  <strong>已发送：</strong>{simResult.best.message_sent}
-                </div>
-              )}
-              {simResult.candidates && simResult.candidates.length > 1 && (
-                <details style={{marginTop:8}}>
-                  <summary style={{cursor:"pointer",color:"#64748b",fontSize:12}}>其他 {simResult.candidates.length - 1} 条候选</summary>
-                  {simResult.candidates.slice(1).map((c,i) => (
-                    <div key={i} style={{fontSize:12,color:"#64748b",padding:"4px 0"}}>
-                      [{c._score}] {c.content}
-                    </div>
-                  ))}
-                </details>
-              )}
-            </div>
-          )}
-        </div>
-        );
-      })()}
-      {actionLog.length > 0 && (
-        <details style={{marginBottom:16}} open>
-          <summary style={{cursor:"pointer",fontSize:13,fontWeight:600,color:"#475569",marginBottom:8}}>
-            Dashboard 操作记录
-            <button onClick={() => setActionLog([])} style={{marginLeft:10,background:"none",border:"1px solid #e2e8f0",borderRadius:6,fontSize:11,color:"#94a3b8",cursor:"pointer",padding:"2px 8px"}}>清空</button>
-          </summary>
-          <div style={{maxHeight:180,overflowY:"auto",fontSize:12,fontFamily:"'Fira Code','Cascadia Code',monospace",background:"rgba(255,255,255,.6)",borderRadius:10,border:"1px solid rgba(148,163,184,.15)",padding:"8px 12px"}}>
-            {actionLog.map((e, i) => (
-              <div key={i} style={{padding:"3px 0",display:"flex",gap:10,borderBottom:i<actionLog.length-1?"1px solid rgba(148,163,184,.08)":"none"}}>
-                <span style={{color:"#94a3b8",flexShrink:0}}>{e.ts}</span>
-                <span style={{color:"#334155",flexShrink:0,minWidth:100}}>{e.action}</span>
-                <span style={{color:"#64748b"}}>{e.detail}</span>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-      {/* Status filter buttons */}
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-        {["", "pending", "pushed", "dismissed"].map(s => (
-          <button key={s} onClick={() => setStatusFilter(s)}
-            style={{padding:"4px 12px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",
-              border: statusFilter===s ? "2px solid var(--brand)" : "1px solid rgba(148,163,184,.35)",
-              background: statusFilter===s ? "rgba(79,70,229,.08)" : "#fff",
-              color: statusFilter===s ? "var(--brand)" : "#475569",
-              transition:"all .15s ease"}}>{s === "" ? "全部" : statusLabel[s]}</button>
-        ))}
-        {statusFilter && <button onClick={() => setStatusFilter("")}
-          style={{padding:"4px 10px",borderRadius:8,fontSize:11,border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:600}}>✕ 清除</button>}
-      </div>
-      <table className="usage-table">
-        <thead>
-          <tr>
-            <th>内容</th>
-            <th>分类</th>
-            <th>质量</th>
-            <th>状态</th>
-            <th>更新时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredNotes.map(n => (
-            <tr key={n.id} style={n.status === "dismissed" ? {opacity: .5} : {}}>
-              <td style={{maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}} title={n.content}>
-                {n.content}
-              </td>
-              <td style={{fontSize:12}}>{catLabel(n.category)}</td>
-              <td style={{fontSize:12, color:"#f59e0b"}}>{qStars(n.quality)}</td>
-              <td style={{fontSize:12}}>
-                <span style={{padding:"2px 8px",borderRadius:6,fontSize:11,fontWeight:600,
-                  background: n.status==="pending"?"#dbeafe":n.status==="pushed"?"#d1fae5":"#f3f4f6",
-                  color: n.status==="pending"?"#1d4ed8":n.status==="pushed"?"#065f46":"#6b7280"
-                }}>{n.status}</span>
-              </td>
-              <td style={{fontSize:11,color:"#94a3b8"}}>{fmtTs(n.updated_at)}</td>
-              <td style={{fontSize:12}}>
-                {n.status === "pending" && (
-                  <>
-                    <button onClick={() => raiseQ(n.id, n.quality)} title="提升优先级" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,marginRight:4}}>⬆</button>
-                    <button onClick={() => lowerQ(n.id, n.quality)} title="降低优先级" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,marginRight:6}}>⬇</button>
-                    <button onClick={() => dismiss(n.id)} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontWeight:600,fontSize:12}}>忽略</button>
-                  </>
-                )}
-              </td>
-            </tr>
-          ))}
-          {filteredNotes.length === 0 && <tr><td colSpan="6" style={{textAlign:"center",color:"#9ca3af"}}>{statusFilter ? "无此状态的 notes" : "暂无 curiosity notes"}</td></tr>}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+// ── Curiosity Tab removed ──
 
 // ── Write Paths Tab ──
 function WritePathsView() {
@@ -1066,16 +792,16 @@ function WritePathsView() {
 - **长期记忆**（\`memory.md\`）：MemoryCurator 增量追加 → PENDING.md → Evolver 定期合并，软上限 4000 字。
 - **自我认知**（\`self.md\`）：Evolver 从 PENDING 选择性吸收更新，固定三节。
 - **向量事实**（\`fact\` 表）：consolidator worker 直接从 user 原话提取 → embedding（\`vec_fact\` 虚表），供 Recaller 语义召回。
-- **主动议程**（\`curiosity_note\` 表）：主动引擎 15min 周期生成，含 24h 冷却 + 反刍检测。
+- **主动议程**（\`asked_question\` 表）：画像收集链路稀疏触发，2 天向量去重，零 pending 池。
 
 \`\`\`
 message（raw，双方）
-  ├─→ vec_message         user 原话 embedding（话题热度 + 反刍检测）
+  ├─→ vec_message         user 原话 embedding
   ├─→ current_context.md  短期摘要
-  ├─→ curiosity_note      主动议程 → push 状态
   ├─→ memory.md           长期用户画像（增量追加 → PENDING → Evolver 定期合并）
   │    └─→ fact + vec_fact（直接从 user 原话提取，独立水位）
-  └─→ self.md             自我认知与关系
+  ├─→ self.md             自我认知与关系
+  └─→ asked_question      画像链路推送过的问句（事件 log + 去重索引）
 \`\`\`
 
 ## memory.md 写入路径
@@ -1156,29 +882,28 @@ message（raw，双方）
               直接从 user 原话提取，不经 memory.md
 \`\`\`
 
-## curiosity_note 写入路径
+## asked_question 写入路径（画像链路）
 
 \`\`\`
 输入
-  message（role=user/assistant）  近期对话（增量水位 last_note_generated_message_id）
-  memory.md                       用户画像（CURIOSITY_PROMPT 注入参考）
+  memory.md      用户画像（4 节）
+  PENDING.md     curator 已抽取但未合并的最新事实
+  asked_question 近 2 天已问过的问题（去重列表）
 
-       ↓  主动引擎（15min 周期轮询，_generate_notes_from_recent）
-       ↓  CURIOSITY_PROMPT（+ memory context block）
-       ↓  LLM → JSON [ { content, category, topic_key, quality } ]，每批最多 3 条
+       ↓  PortraitCollector.maybe_tick（每 K 轮 ≈ 2h，且 hours_since_active ≥ 24h）
+       ↓  PORTRAIT_PROMPT
+       ↓  LLM → JSON { topic_key, message }
 
-       整理阶段（同周期，_review_curiosity_notes）：
-         CONSOLIDATE_PROMPT → LLM 重新打分 / 合并 / 标 dismissed
-         mentions_recent：topic_key embedding 搜 vec_message（7d 窗口）
-       
-       推送决策：
-         冷却检查：topic_key embedding 与 24h 内 pushed note 的 topic_key 相似度 > 0.85 → 跳过
-         反刍检测：topic_key embedding 搜 vec_message（最近 50 条 user 原话），命中 → 跳过
-         should_push(quality, hours_since_active, pushed_today)
+       去重：
+         embed(message) 与 2 天内 asked_question 各条比 cosine
+         超过阈值（默认 0.85）则重生成，最多 retry 次
+
+       ↓  publish 到 channel
+       ↓  写入 asked_question + vec_asked_question
 
 输出
-  curiosity_note 表   含 content / category / topic_key / quality / needs_research
-                      状态流转：pending → pushed（→ dismissed 由整理阶段标记）
+  asked_question 表  事件 log（content / topic_key / asked_at）+ 共享当日上限
+  vec_asked_question 虚表  sqlite-vec，去重用 embedding
 \`\`\`
 
 ## 注入
@@ -1242,6 +967,147 @@ message（raw，双方）
   );
 }
 
+// ── Proactive Tab ──
+function ProactiveView() {
+  const [status, setStatus] = React.useState(null);
+  const [statusLoading, setStatusLoading] = React.useState(false);
+  const [simResult, setSimResult] = React.useState(null);
+  const [simLoading, setSimLoading] = React.useState(false);
+  const [execResult, setExecResult] = React.useState(null);
+  const [execLoading, setExecLoading] = React.useState(false);
+
+  const loadStatus = React.useCallback(async () => {
+    setStatusLoading(true);
+    try { setStatus(await api("/api/portrait/status")); } catch(e) {}
+    finally { setStatusLoading(false); }
+  }, []);
+
+  React.useEffect(() => { loadStatus(); }, []);
+
+  const simulate = async () => {
+    setSimLoading(true); setSimResult(null);
+    try { setSimResult(await api("/api/portrait/simulate", {method:"POST"})); }
+    catch(e) { setSimResult({verdict:"error", error: String(e)}); }
+    finally { setSimLoading(false); }
+  };
+
+  const execute = async () => {
+    setExecLoading(true); setExecResult(null);
+    try {
+      const r = await api("/api/portrait/execute", {method:"POST"});
+      setExecResult(r); loadStatus();
+    } catch(e) { setExecResult({verdict:"error", error: String(e)}); }
+    finally { setExecLoading(false); }
+  };
+
+  const ScoreBar = ({label, value, color}) => (
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:13}}>
+        <span style={{color:"#475569",fontWeight:600}}>{label}</span>
+        <span style={{color:"#1e293b",fontFamily:"'Fira Code',monospace"}}>{(value*100).toFixed(1)}%</span>
+      </div>
+      <div style={{height:8,borderRadius:4,background:"rgba(148,163,184,.2)",overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${Math.min(100,value*100)}%`,background:color,borderRadius:4,transition:"width .6s ease"}} />
+      </div>
+    </div>
+  );
+
+  const verdictBadge = v => {
+    const map = {
+      pushed: ["#10b981","已发送"],
+      would_push: ["#6366f1","可发送"],
+      score_too_low: ["#f59e0b","评分不足"],
+      daily_cap_reached: ["#ef4444","今日已满"],
+      blocked_by_quiet_hours: ["#94a3b8","静默时段"],
+      dedup_blocked: ["#a855f7","去重拦截"],
+      no_gap_found: ["#64748b","无空白画像"],
+      gates_skipped: ["#3b82f6","门槛已跳过"],
+      error: ["#ef4444","错误"],
+    };
+    const [color, text] = map[v] || ["#94a3b8", v || "—"];
+    return <span style={{padding:"2px 10px",borderRadius:999,background:color+"22",color,fontSize:12,fontWeight:700}}>{text}</span>;
+  };
+
+  const ResultCard = ({r, title}) => r && (
+    <div style={{marginTop:16,padding:"14px 18px",borderRadius:12,background:"rgba(255,255,255,.7)",border:"1px solid rgba(148,163,184,.2)",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+        <span style={{fontSize:13,fontWeight:700,color:"#334155"}}>{title}</span>
+        {verdictBadge(r.verdict)}
+      </div>
+      {r.score !== undefined && <div style={{fontSize:12,color:"#64748b",marginBottom:4}}>score: <b style={{color:"#1e293b"}}>{r.score}</b>（silence {r.score_silence}，warmth {r.score_warmth}）</div>}
+      {r.message_preview && <div style={{marginTop:8,padding:"10px 12px",borderRadius:8,background:"rgba(99,102,241,.06)",fontSize:13,color:"#1e293b",borderLeft:"3px solid #6366f1"}}>💬 {r.message_preview}</div>}
+      {r.message_sent && <div style={{marginTop:8,padding:"10px 12px",borderRadius:8,background:"rgba(16,185,129,.06)",fontSize:13,color:"#1e293b",borderLeft:"3px solid #10b981"}}>✅ {r.message_sent}</div>}
+      {r.topic_key && <div style={{marginTop:6,fontSize:12,color:"#94a3b8"}}>topic_key: {r.topic_key}</div>}
+      {r.error && <div style={{marginTop:6,fontSize:12,color:"#ef4444"}}>{r.error}</div>}
+    </div>
+  );
+
+  const nextSendLabel = () => {
+    if (!status) return null;
+    if (status.cap_reached) return {icon:"🚫", text:`今日已达上限（${status.asked_today}/${status.daily_cap}），明天重置后可发`, color:"#ef4444"};
+    if (status.quiet_now) return {icon:"🌙", text:"当前处于静默时段", color:"#94a3b8"};
+    if (status.score_ready) return {icon:"✅", text:"评分已就绪，最快 ≈ 2h 内触发", color:"#10b981"};
+    return {icon:"⏳", text:`评分不足，还需沉默约 ${status.hours_until_ready}h（score ${status.score} < ${status.score_threshold}）`, color:"#f59e0b"};
+  };
+
+  const eta = nextSendLabel();
+
+  return (
+    <div style={{flex:1,overflowY:"auto",padding:"24px 32px",animation:"fadeUp .4s ease both"}}>
+      <div style={{maxWidth:680,margin:"0 auto",display:"flex",flexDirection:"column",gap:20}}>
+
+        {/* 状态卡 */}
+        <div style={{padding:"20px 24px",borderRadius:16,background:"rgba(255,255,255,.75)",border:"1px solid rgba(148,163,184,.2)",boxShadow:"0 4px 20px rgba(79,70,229,.06)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <span style={{fontWeight:800,fontSize:16,color:"#1e293b"}}>画像收集状态</span>
+            <button onClick={loadStatus} disabled={statusLoading} style={{padding:"6px 14px",borderRadius:8,border:"1px solid rgba(148,163,184,.3)",background:"rgba(255,255,255,.8)",fontSize:12,cursor:"pointer",color:"#475569"}}>
+              {statusLoading ? "..." : "↻ 刷新"}
+            </button>
+          </div>
+
+          {status ? (
+            <>
+              <ScoreBar label={`😶‍🌫️ 沉默度 silence（距上次互动 ${status.hours_since_active}h）`} value={status.score_silence} color="linear-gradient(90deg,#6366f1,#8b5cf6)" />
+              <ScoreBar label={`🔥 近期活跃度 warmth（近 7 天 ${status.recent_msgs} 条消息）`} value={status.score_warmth} color="linear-gradient(90deg,#f59e0b,#ec4899)" />
+
+              <div style={{marginTop:8,marginBottom:4,fontSize:13,fontWeight:600,color:"#475569",display:"flex",justifyContent:"space-between"}}>
+                <span>综合得分 score</span>
+                <span style={{fontFamily:"'Fira Code',monospace",color:"#1e293b"}}>{status.score} / 阈值 {status.score_threshold}</span>
+              </div>
+              <div style={{height:10,borderRadius:5,background:"rgba(148,163,184,.15)",overflow:"visible",position:"relative",marginBottom:16}}>
+                <div style={{height:"100%",width:`${Math.min(100,status.score*100)}%`,background:"linear-gradient(90deg,#4f46e5,#7c3aed,#db2777)",borderRadius:5,transition:"width .6s ease"}} />
+                <div style={{position:"absolute",top:-2,left:`${status.score_threshold*100}%`,width:2,height:14,background:"#ef4444",borderRadius:2}} title={`阈值 ${status.score_threshold}`} />
+              </div>
+
+              {eta && (
+                <div style={{padding:"12px 16px",borderRadius:10,background:`${eta.color}11`,border:`1px solid ${eta.color}33`,fontSize:13,color:eta.color,fontWeight:600}}>
+                  {eta.icon} {eta.text}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{color:"#94a3b8",fontSize:13}}>加载中…</div>
+          )}
+        </div>
+
+        {/* 操作按钮 */}
+        <div style={{display:"flex",gap:12}}>
+          <button onClick={simulate} disabled={simLoading} style={{flex:1,padding:"12px 0",borderRadius:12,border:"1px solid rgba(99,102,241,.35)",background:"rgba(99,102,241,.08)",color:"#4f46e5",fontWeight:700,fontSize:14,cursor:"pointer",transition:"all .18s"}}>
+            {simLoading ? "演练中…" : "🧪 演练（不发送）"}
+          </button>
+          <button onClick={execute} disabled={execLoading} style={{flex:1,padding:"12px 0",borderRadius:12,border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer",boxShadow:"0 4px 14px rgba(124,58,237,.3)",transition:"all .18s"}}>
+            {execLoading ? "发送中…" : "🚀 强制发送"}
+          </button>
+        </div>
+
+        <ResultCard r={simResult} title="演练结果" />
+        <ResultCard r={execResult} title="发送结果" />
+
+      </div>
+    </div>
+  );
+}
+
 // ── App ──
 function App() {
   const [tab, setTab] = useState("sessions");
@@ -1255,11 +1121,11 @@ function App() {
           <button className={`tab${tab==="messages"?" active":""}`} onClick={()=>setTab("messages")}>📨 Messages</button>
           <button className={`tab${tab==="usage"?" active":""}`} onClick={()=>setTab("usage")}>📊 Usage</button>
           <button className={`tab${tab==="memory"?" active":""}`} onClick={()=>setTab("memory")}>🧠 Memory</button>
-          <button className={`tab${tab==="curiosity"?" active":""}`} onClick={()=>setTab("curiosity")}>💭 Curiosity</button>
+          <button className={`tab${tab==="proactive"?" active":""}`} onClick={()=>setTab("proactive")}>🎯 画像</button>
           <button className={`tab${tab==="writepaths"?" active":""}`} onClick={()=>setTab("writepaths")}>📐 写入路径</button>
         </div>
       </div>
-      {tab === "sessions" ? <SessionsView /> : tab === "messages" ? <MessagesView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : tab === "curiosity" ? <CuriosityView /> : <WritePathsView />}
+      {tab === "sessions" ? <SessionsView /> : tab === "messages" ? <MessagesView /> : tab === "usage" ? <UsageView /> : tab === "memory" ? <MemoryView /> : tab === "proactive" ? <ProactiveView /> : <WritePathsView />}
     </>
   );
 }
