@@ -10,6 +10,7 @@ VEC_ATTACH = "vec"
 VEC_FACT = f"{VEC_ATTACH}.vec_fact"
 FTS_FACT = f"{VEC_ATTACH}.fts_fact"
 VEC_MESSAGE = f"{VEC_ATTACH}.vec_message"
+VEC_ASKED = f"{VEC_ATTACH}.vec_asked_question"
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS session (
@@ -36,23 +37,15 @@ CREATE TABLE IF NOT EXISTS message (
 CREATE INDEX IF NOT EXISTS idx_msg_session
     ON message(session_id, seq);
 
-CREATE TABLE IF NOT EXISTS curiosity_note (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id     TEXT,
-    content        TEXT NOT NULL DEFAULT '',
-    category       TEXT NOT NULL DEFAULT 'curiosity',
-    topic_key      TEXT NOT NULL DEFAULT '',
-    quality        INTEGER NOT NULL DEFAULT 3,
-    needs_research INTEGER NOT NULL DEFAULT 0,
-    status         TEXT NOT NULL DEFAULT 'pending',
-    triggered_at   TEXT,
-    merged_from    TEXT,
-    created_at     TEXT NOT NULL,
-    updated_at     TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS asked_question (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    content   TEXT NOT NULL DEFAULT '',
+    topic_key TEXT NOT NULL DEFAULT '',
+    asked_at  TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_note_status
-    ON curiosity_note(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_asked_question_asked_at
+    ON asked_question(asked_at DESC);
 
 CREATE TABLE IF NOT EXISTS memory_state (
     key   TEXT PRIMARY KEY,
@@ -90,6 +83,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS {VEC_MESSAGE} USING vec0(
     embedding  FLOAT[1024]
 );
 """),
+    ("vec_asked_question", f"""
+CREATE VIRTUAL TABLE IF NOT EXISTS {VEC_ASKED} USING vec0(
+    asked_question_id INTEGER PRIMARY KEY,
+    embedding         FLOAT[1024]
+);
+"""),
 ]
 
 
@@ -101,8 +100,4 @@ def init_schema(conn: sqlite3.Connection, vec_db_path: str | Path) -> None:
             conn.executescript(ddl)
         except Exception:
             log.warning("%s 虚表创建跳过（可能已存在）", name)
-    try:
-        conn.execute("ALTER TABLE curiosity_note ADD COLUMN topic_key TEXT NOT NULL DEFAULT ''")
-    except Exception:
-        pass
     conn.commit()
