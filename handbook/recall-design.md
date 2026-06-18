@@ -33,7 +33,6 @@
 |---|---|---|---|---|
 | **compression** `current_context.md`（已有 recapper） | 滑窗 N 轮 | 一段对话 | 5 字段状态快照 | 喂 prompt（短期被动） |
 | **curator** `memory.md`（已有） | 水位+阈值 | user 原话累积 | 分类画像 | 喂 prompt（长期画像） |
-| **curiosity_note**（已有） | 每个 turn 后 | 最近对话 | 自言自语笔记 | 主动聊天弹药 |
 | **召回** `fact` 表 + 向量库（新增） | consolidator 水位 → embed；Recaller 按 turn 触发 | user 原话 | facts 数组 + 向量索引 | 按 query 召回，临时注入 prompt |
 
 四条路径同源（最近对话 / user 原话），但**产物形态和消费时机不同**，不重复。

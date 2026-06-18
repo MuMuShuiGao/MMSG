@@ -6,17 +6,17 @@
 - **长期记忆**（`memory.md`）：MemoryCurator 增量追加 → PENDING.md → Evolver 定期合并，软上限 4000 字。
 - **自我认知**（`self.md`）：Evolver 从 PENDING 选择性吸收更新，固定三节。
 - **向量事实**（`fact` 表）：Consolidator worker 直接从 user 原话提取 → embedding（`vec_fact` 虚表），供 Recaller 语义召回。
-- **主动议程**（`curiosity_note` 表）：主动引擎 15min 周期生成，含 24h 冷却 + 反刍检测。
+- **主动议程**（`asked_question` 表）：画像收集链路稀疏触发，2 天向量去重，零 pending 池。
 
 ```
 message（raw，双方）
-  ├─→ vec_message         user 原话 embedding（话题热度 + 反刍检测）
+  ├─→ vec_message         user 原话 embedding
   ├─→ current_context.md  短期摘要
-  ├─→ curiosity_note      主动议程 → push 状态
   ├─→ PENDING.md          增量事实（MemoryCurator 产出）
   │    ├─→ memory.md      Evolver 智能合并（去重/冲突解决/归类）
   │    └─→ self.md        Evolver 选择性吸收（三节固定）
-  └─→ fact + vec_fact     直接从 user 原话提取，独立水位
+  ├─→ fact + vec_fact     直接从 user 原话提取，独立水位
+  └─→ asked_question      画像链路推送过的问句（事件 log + 去重索引）
 ```
 
 ## PENDING 管道
@@ -113,30 +113,32 @@ Consolidator 阶段
               直接从 user 原话提取，不经 memory.md
 ```
 
-## curiosity_note 写入路径
+## asked_question 写入路径（画像链路）
 
 ```
 输入
-  message（role=user/assistant）  近期对话（增量水位 last_note_generated_message_id）
-  memory.md                       用户画像（CURIOSITY_PROMPT 注入参考）
+  memory.md      用户画像（4 节）
+  PENDING.md     curator 已抽取但未合并的最新事实
+
+触发条件（全部满足）
+              portrait_tick % 8 == 0      每 8 轮主循环（≈ 2h）考虑一次
+              score >= 0.5                silence × 0.6 + warmth × 0.4 ≥ 0.5
+              not in_quiet_hours
+              asked_today < 1             当天未推送
 
 生成阶段
-              ↓  主动引擎（15min 周期轮询，_generate_notes_from_recent）
-              ↓  CURIOSITY_PROMPT（+ memory context block）
-              ↓  LLM → JSON [ { content, category, topic_key, quality } ]，每批最多 3 条
+              ↓  PortraitCollector.maybe_tick()
+              ↓  读 memory.md + PENDING.md + 近 2d asked_question
+              ↓  PORTRAIT_PROMPT
+              ↓  LLM → JSON { topic_key, message }
 
-整理阶段（同周期，_review_curiosity_notes）
-              ↓  CONSOLIDATE_PROMPT → LLM 重新打分 / 合并 / 标 dismissed
-              ↓  mentions_recent：topic_key embedding 搜 vec_message（7d 窗口）
-
-推送决策
-              ↓  冷却检查：topic_key embedding 与 24h 内 pushed note 的 topic_key 相似度 > 0.85 → 跳过
-              ↓  反刍检测：topic_key embedding 搜 vec_message（最近 50 条 user 原话），命中 → 跳过
-              ↓  should_push(quality, hours_since_active, pushed_today)
+去重校验
+              ↓  embed 新问句
+              ↓  与近 2d asked_question 做 cosine，≥ 0.85 → 重生成（最多 2 次）
 
 输出
-  curiosity_note 表   含 content / category / topic_key / quality / needs_research
-                      状态流转：pending → pushed（→ dismissed 由整理阶段标记）
+  asked_question      content / topic_key / asked_at
+  vec_asked_question  embedding（2 天去重窗口）
 ```
 
 ## 注入
